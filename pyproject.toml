@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=9.1.1"]
 
 [project.scripts]
 bili = "bili_cli.main:main"
