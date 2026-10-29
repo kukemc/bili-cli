@@ -367,7 +367,12 @@ def coin(
         if output.settings.dry_run:
             return {"dry_run": True, "action": "video.coin", "params": {"bvid": bvid, "coins": coins, "like": with_like}}
         guard.check("coin", units=coins)
-        await v.pay_coin(num=coins, like=with_like)
+        paid = await v.pay_coin(num=coins, like=with_like) or {}
+        # bilibili-api 17.4.2 sends like, but B 站's coin/add expects select_like, so the
+        # flag is silently ignored and the coin succeeds without a like. Do it explicitly and
+        # verify, so --like behaves as documented no matter what the library sends.
+        if with_like and not (paid.get("like") if isinstance(paid, dict) else False) and not (await _relation(v))["liked"]:
+            await v.like(status=True)
         guard.record("coin", {"bvid": bvid, "coins": coins, "like": with_like}, "ok", units=coins)
         return {"bvid": bvid, **await _relation(v, settle=True), **_watch_note(bvid)}
 

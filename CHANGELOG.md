@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- ili video coin --like：以前只投币、不点赞，返回却显示成功。原因是 ilibili-api 17.4.2 的 pay_coin() 把参数名写成了 like，而 B 站接口要的是 select_like，于是被静默忽略。现在投币后会检查返回和实际关系，没点上就显式补一次点赞。
+
 ## [1.2.1] - 2026-10-26
 
 ### Fixed
