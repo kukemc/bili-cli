@@ -44,7 +44,7 @@ DAY_SECONDS = 24 * 3600
 
 
 def _state_path():
-    return config.home() / "ratelimit.json"
+    return config.state_home() / "ratelimit.json"
 
 
 def _load() -> dict[str, list[float]]:
@@ -114,15 +114,29 @@ def _check(action: str, units: int) -> None:
 
 
 def record(action: str, params: dict[str, Any], result: Any, units: int = 1) -> None:
-    """Remember a successful write for rate limiting and append it to the audit log."""
-    now = time.time()
-    state = _load()
-    keep = DAY_SECONDS if action in DAILY_LIMITS else WINDOW_SECONDS
-    state[action] = [t for t in state.get(action, []) if now - t < keep] + [now] * units
-    tmp = _state_path().with_suffix(".tmp")
-    tmp.write_text(json.dumps(state), encoding="utf-8")
-    os.replace(tmp, _state_path())
+    """Remember a successful write for rate limiting and append it to the audit log.
 
-    entry = {"time": now, "action": action, "params": params, "result": result}
-    with open(config.home() / "audit.log", "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    This runs *after* the action already happened, so a state-file write failure
+    must never turn a successful write into a failed command: an agent would see
+    the error and retry, sending the same comment / DM twice. Lose the local
+    bookkeeping, keep the result.
+    """
+    now = time.time()
+    try:
+        state = _load()
+        keep = DAY_SECONDS if action in DAILY_LIMITS else WINDOW_SECONDS
+        state[action] = [t for t in state.get(action, []) if now - t < keep] + [now] * units
+        home = config.state_home()
+        home.mkdir(parents=True, exist_ok=True)
+        tmp = _state_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp, _state_path())
+
+        entry = {"time": now, "action": action, "params": params, "result": result}
+        with open(home / "audit.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:
+        from . import output
+
+        output.info(f"警告：无法写入限流/审计状态（{exc}）；操作本身已经成功，继续。")
+

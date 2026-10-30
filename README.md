@@ -271,6 +271,17 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 </details>
 
 <details>
+<summary>在沙箱 / 只读环境里，写操作为什么会报错？</summary>
+
+写操作成功后 bili-cli 会记一条本地记录（
+atelimit.json、udit.log），默认写在配置目录。进程只能写某个工作区时（沙箱、只读容器），这一步可能失败——现在它只往 stderr 打一条警告，命令仍然返回 ok: true，不会让 Agent 误以为没发出去而重发。
+
+想把状态文件放到别处，设置 BILI_CLI_STATE_DIR 指向一个可写目录：
+atelimit.json、udit.log、seen.json 会写到那里，登录凭证仍然留在 BILI_CLI_HOME（Windows：%APPDATA%\\bili-cli）。
+
+</details>
+
+<details>
 <summary>凭证存在哪里？安全吗？</summary>
 
 Windows 在 `%APPDATA%\bili-cli\`，其他系统在 `~/.config/bili-cli/`（权限 600），只会发给 B 站自己的服务器。详见 [SECURITY.md](https://github.com/kukemc/bili-cli/blob/main/SECURITY.md)。

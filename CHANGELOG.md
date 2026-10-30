@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added
+- BILI_CLI_STATE_DIR：把限流记录（
+atelimit.json）、审计日志（udit.log）和已看列表（seen.json）写到指定目录，登录凭证仍留在 BILI_CLI_HOME。适合沙箱、只读容器这类只能写工作区的环境。
+
+### Fixed
+- 写操作成功之后，如果状态文件写不进去（沙箱 / 只读目录），不再把已经成功的操作报成失败：现在只往 stderr 打一条警告，命令仍然返回成功。以前这会让 Agent 收到 internal_error，误以为评论 / 私信没发出去而重发。
+
 ## [1.2.1] - 2026-10-26
 
 ### Fixed
