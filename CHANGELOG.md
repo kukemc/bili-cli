@@ -8,8 +8,11 @@
 - `bili user coins <UID|昵称>`：对方在主页公开的最近投币（视频、投了几个币、投币时间），输出不含 IP 属地。
 - `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。
 - `bili user bangumi <UID|昵称> --type bangumi|cinema`：对方公开的追番 / 追剧，`--page` / `--size` 翻页，有下一页时给 `next_with`。
-- 三条命令都需要登录。对方没公开时返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
-- 与文档的差异：`follow_status` 线上只见到 2（在看），按文档 1 想看 / 2 在看 / 3 看过映射，未知值原样保留；看别人时 `progress` 为空串，输出 null；收藏夹未公开时接口是 code 0 + data null 而不是错误码。
+- `bili user likes`（最近点赞，最多 20 个）、`bili user games`（最近玩过的游戏）、`bili user collections`（合集和系列）、`bili user articles`（专栏文章）；没公开时同样返回 `hidden: true`。
+- `bili user following` / 新增的 `bili user followers` 可以传 UID 或昵称看别人的关注和粉丝；不传还是看自己。
+- `bili user info` 多了 `sections`（主页导航栏上的各板块数量，不反映隐私设置）和 `more_with`；`bili user videos` 第一页把置顶和代表作排在最前面，带 `label`。
+- 这些看别人的命令都需要登录。对方没公开时返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
+- 与文档的差异：`follow_status` 线上只见到 2（在看），按文档 1 想看 / 2 在看 / 3 看过映射，未知值原样保留；看别人时 `progress` 为空串，输出 null；收藏夹未公开时接口是 code 0 + data null 而不是错误码。主页各板块数量（navnum）不管隐私设置，对方关掉收藏夹后照样给数；最近玩过的游戏的接口忽略 pn / ps，旧的 lastplaygame 已 404；关注 / 粉丝 ps 超过 50 会被截成 50。
 
 ## [1.2.1] - 2026-10-26
 

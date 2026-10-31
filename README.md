@@ -114,7 +114,7 @@ $ bili dm send owner "今天科技区第二名很有意思：有人造了一块�
 - **单条稿件**：播放、每百次播放的点赞 / 收藏 / 投币率、**完播率、平均观看时长**
 - **整个账号**：播放、访客、涨粉和上一周期对比，手机 / 电脑播放占比，粉丝贡献了多少播放，**超过多少同类 UP 主**
 - **数据中心**：累计总量与昨日增量、30 天增量曲线、观众画像（粉丝 vs 路人的性别 / 年龄 / 省份 / 兴趣标签）、粉丝来源、稿件数据表，以及单稿的 **3 秒退出率、封面点击倍数、播转粉率**和同类分位（`bili data`）
-- **看别人**：任意 UP 主的资料、投稿（按播放排序找爆款、按关键词筛系列）、动态，以及对方在主页公开的最近投币、收藏夹和追番
+- **看别人**：任意 UP 主的资料与主页总览、投稿（置顶 / 代表作在前，按播放排序找爆款、按关键词筛系列）、动态、关注与粉丝、合集和专栏，以及对方公开的最近投币、收藏夹、追番、点赞和玩过的游戏
 
 ### 🎛️ UP 主高级玩法
 给自己的视频加**进度条分段章节**、**互动投票**、**评分弹幕**、**一键三连按钮**、**下期预告**、**关联视频卡片**，还能看投票结果和评分均分。
@@ -198,14 +198,17 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili feed inbox` | 一次看完所有新消息（读取后 B 站标为已读） |
 | `bili feed replies / mentions / likes / system / notifications` | 回复、@、赞、系统通知、未读数 |
 | `bili feed recommend / timeline` | 首页推荐、关注动态（`--type video` 只看新投稿，`--up` 只看一个人） |
-| `bili user follow / unfollow / following` | 关注、取关、我关注的人 |
+| `bili user follow / unfollow / following / followers` | 关注、取关；我（或别人）的关注和粉丝列表 |
 | `bili user block / unblock / blocked` | 拉黑、解除拉黑、我的黑名单（应对骚扰） |
 | `bili hot search / popular / weekly / precious / rank` | 热搜、综合热门、每周必看、入站必刷、排行榜 |
 | `bili search video / user` | 搜索 |
-| `bili user info / videos` | 任意用户的资料、粉丝数、投稿列表（按播放 / 收藏排序，按关键词筛系列）；动态用 `bili dynamic list --mid` |
+| `bili user info / videos` | 任意用户的资料、粉丝数、投稿列表（按播放 / 收藏排序，按关键词筛系列）、主页各板块数量；第一页置顶 / 代表作在前；动态用 `bili dynamic list --mid` |
 | `bili user coins` | 对方公开的最近投币 |
 | `bili user favs` | 对方公开的收藏夹，只列夹名和数量 |
 | `bili user bangumi` | 对方公开的追番 / 追剧，`--type cinema` 看追剧 |
+| `bili user likes` | 对方公开的最近点赞 |
+| `bili user games` | 对方公开的最近玩过的游戏 |
+| `bili user collections / articles` | 对方的合集和系列、专栏文章 |
 | `bili comment list / replies / post / reply / like / delete / check / pin / emotes / images` | 评论读写、`--unreplied` 只看没回过的、置顶自己作品下的评论；`--at <UID|昵称|owner>` 真正的 @，`--image` 带图，`emotes` 查可用表情；`--type dynamic/draw/article` 用于动态和专栏 |
 | `bili dm list / read / send` | 私信 |
 | `bili dm watch` | 实时接收新私信（推送 + 20 秒兜底轮询 + 定期全量对账，每条一行 JSON；`--backlog` 先吐积压） |
