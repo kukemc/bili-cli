@@ -53,7 +53,7 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 看自己的数据 | `bili me stats`（账号：播放、涨粉、播放端、超过多少同类 UP）、`bili upload stats <BV>`（单稿：互动率、完播率） |
 | 数据中心 | `bili data overview / trend / audience / fans / videos / video / diagnose`（累计与昨日增量、30 天趋势、观众画像、粉丝来源、稿件表、单稿诊断），用法和复盘套路见 [references/workflows.md](references/workflows.md) |
 | 研究别的 UP 主 | `bili user info <UID|昵称>`、`bili user videos <UID> --order views`（找爆款）/ `-k 系列名` |
-| 看别人主页上有什么 | 先 `bili user info <UID|昵称>`，看 `sections`（各板块数量，不代表公开）和 `more_with`；再按需 `bili user coins / favs / bangumi / likes / games / collections / articles <UID|昵称>`、`bili user following / followers <UID|昵称>`（不填就是自己），翻页用 `next_with`；`bili user videos` 第一页会把置顶和代表作排在前面（`label`）；`hidden: true` 表示对方没公开，不要换方式重试 |
+| 看别人主页上有什么 | 先 `bili user info <UID|昵称>`，看 `sections`（各板块数量 + 前 3 条预览，`hidden: true` 表示没公开）先了解全貌，再用 `more_with` 里的命令看某一块的全部；再按需 `bili user coins / favs / bangumi / likes / games / collections / articles <UID|昵称>`、`bili user following / followers <UID|昵称>`（不填就是自己），翻页用 `next_with`；`bili user videos` 第一页会把置顶和代表作排在前面（`label`）；`hidden: true` 表示对方没公开，不要换方式重试 |
 | 看关注的人发了什么 | `bili feed timeline`（关注动态）、`--type video` 只看新投稿、`--up <UID|昵称>` 只看一个人 |
 | 关注 / 取关 | `bili user follow <UID|昵称>`、`bili user unfollow <UID|昵称>`、`bili user following`（我关注的人）；只关注用户要求的或真正想长期看的人，不要批量关注 |
 | 拉黑骚扰者 | `bili user block <UID|昵称>`、`bili user unblock`、`bili user blocked`（黑名单）；只在用户要求或明显恶意骚扰时用，拉黑前告诉用户 |
