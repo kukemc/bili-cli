@@ -167,7 +167,7 @@ def test_favs_filter_private_and_raw(monkeypatch, patch_user):
     out = _data(result)
     assert out["count"] == 3
     assert [item["id"] for item in out["items"]] == [1, 3, 5]
-    assert [item["default"] for item in out["items"]] == [True, False, False]
+    assert all("default" not in item for item in out["items"])
     assert "私有甲" not in result.stdout and "私有乙" not in result.stdout
 
     raw = runner.invoke(app, ["--raw", "user", "favs", "2"])
@@ -209,7 +209,7 @@ def test_bangumi_types_pagination_and_mapping(monkeypatch, patch_user):
     assert [x["follow_status"] for x in items] == ["想看", "在看", "看过", 9]
     assert items[1]["progress"] is None and items[1]["total"] is None
     assert items[0]["total"] == 12
-    assert items[0]["url"] == "https://www.bilibili.com/bangumi/play/ss11"
+    assert items[0]["url"] is None
     assert items[2]["url"] == "https://example.test/season"
     assert data["next_with"] == "bili user bangumi 2 --type cinema --page 3 --size 5"
 
@@ -230,8 +230,10 @@ def test_bangumi_hidden_validation_and_last_page(monkeypatch, patch_user):
     FakeUser.response = _privacy_error()
     assert _data(runner.invoke(app, ["user", "bangumi", "2"]))["hidden"] is True
 
+    FakeUser.response = {"total": 0, "list": []}
     result = runner.invoke(app, ["user", "bangumi", "2", "--size", "31"])
-    assert result.exit_code == 2
+    assert result.exit_code == 0, result.output
+    assert FakeUser.calls[-1].kwargs["ps"] == 31
     result = runner.invoke(app, ["user", "bangumi", "2", "--type", "anime"])
     assert result.exit_code != 0
     assert json.loads(result.stdout)["error"]["code"] == "invalid_argument"

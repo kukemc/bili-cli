@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import typer
@@ -24,8 +25,8 @@ BANGUMI_TYPES = {"bangumi": user.BangumiType.BANGUMI, "cinema": user.BangumiType
 FOLLOW_STATUS = {1: "想看", 2: "在看", 3: "看过"}
 
 
-async def _public(fetch):
-    """接口结果；对方没公开（53013 或 data 为 null）时返回 None。其他错误照常抛出。"""
+async def _public(fetch: Callable[[], Awaitable[Any]]) -> Any:
+    """接口结果；对方没公开（53013）时返回 None。收藏夹接口未公开时本身就返回 None，调用方一并当作隐藏。其他错误照常抛出。"""
     try:
         return await fetch()
     except ResponseCodeException as exc:
@@ -34,7 +35,7 @@ async def _public(fetch):
         raise
 
 
-def _hidden(mid):
+def _hidden(mid: int) -> dict[str, Any]:
     return {"mid": mid, "hidden": True, "items": []}
 
 
@@ -148,7 +149,7 @@ def coins(who: str = USER_ARG) -> None:
                 {
                     "bvid": v.get("bvid"),
                     "title": v.get("title"),
-                    "coins": v["coins"],
+                    "coins": v.get("coins"),
                     "coined_at": iso_time(v.get("time")),
                     "owner": (v.get("owner") or {}).get("name"),
                     "watch_with": f"bili video watch {v.get('bvid')}",
@@ -175,10 +176,9 @@ def favs(who: str = USER_ARG) -> None:
             return {**data, "list": public, "count": len(public)}
         items = [
             {
-                "id": f["id"],
+                "id": f.get("id"),
                 "title": f.get("title"),
                 "media_count": f.get("media_count"),
-                "default": not ((f.get("attr") or 0) >> 1) & 1,
             }
             for f in public
         ]
@@ -192,7 +192,7 @@ def bangumi(
     who: str = USER_ARG,
     type_: str = typer.Option("bangumi", "--type", help="类型：bangumi（追番）/ cinema（追剧，电影、电视剧、纪录片等）。"),
     page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
-    size: int = typer.Option(20, "--size", min=1, max=30, help="每页条数（B 站最多 30）。"),
+    size: int = typer.Option(20, "--size", min=1, help="每页条数。"),
 ) -> None:
     """用户公开的追番 / 追剧列表：在看什么、看到第几集。对方没公开时 hidden 为 true。"""
 
@@ -223,7 +223,7 @@ def bangumi(
                     "follow_status": FOLLOW_STATUS.get(v.get("follow_status"), v.get("follow_status")),
                     "progress": v.get("progress") or None,
                     "total": v.get("total_count") if (v.get("total_count") or 0) > 0 else None,
-                    "url": v.get("url") or f"https://www.bilibili.com/bangumi/play/ss{v.get('season_id')}",
+                    "url": v.get("url"),
                 }
                 for v in data.get("list") or []
             ],
