@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `bili video coin --like`：以前只投币、不点赞，返回却显示成功。原因是 `bilibili-api` 17.4.2 的 `pay_coin()` 把参数名写成了 `like`，而 B 站接口要的是 `select_like`，于是被静默忽略。现在投币成功后会先记账、再检查实际关系并显式补赞；补赞走 `video_like` 的限流和审计，失败只在输出里加 `like_error`，不影响已经完成的投币。
+
 ## [1.2.1] - 2026-10-26
 
 ### Fixed
