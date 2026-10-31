@@ -85,6 +85,9 @@ class FakeUser:
     async def get_top_videos(self):
         return await self._call("get_top_videos")
 
+    async def get_subscribed_bangumi(self, **kwargs):
+        return await self._call("get_subscribed_bangumi", **kwargs) or {"list": []}
+
     async def get_masterpiece(self):
         return await self._call("get_masterpiece") or []
 
@@ -125,22 +128,82 @@ def _video(bvid, **extra):
             "stat": {"view": 12, "reply": 3, "danmaku": 4}, **extra}
 
 
-def test_info_navnum_sections_raw_and_nav_error(patch_user):
-    nav_url = "https://api.bilibili.com/x/space/navnum"
-    FakeApi.responses[nav_url] = {"video": 9, "favourite": {"master": 8, "guest": 7},
-                                  "bangumi": 6, "cinema": 5, "article": 4,
-                                  "album": 3, "audio": 2, "opus": 1}
+def test_info_sections_preview_all_public_and_raw(patch_user, monkeypatch):
+    _login()
+    nav_url = user_cmd.NAVNUM_URL
+    FakeApi.responses.update({
+        nav_url: {"video": 9, "favourite": {"master": 8, "guest": 7}, "bangumi": 6,
+                  "cinema": 5, "article": 4, "album": 3, "audio": 2, "opus": 1},
+        user_cmd.COIN_URL: [{"title": f"coin{i}"} for i in range(4)],
+        user_cmd.LIKE_URL: {"list": [{"title": f"like{i}"} for i in range(4)]},
+        user_cmd.GAME_URL: {"total_count": 10, "list": [{"game_name": f"game{i}"} for i in range(4)]},
+    })
+    FakeUser.responses.update({
+        "get_relation_info": {"following": 2},
+        "get_videos": {"list": {"vlist": [{"title": f"video{i}"} for i in range(4)]}},
+        "get_subscribed_bangumi": {"list": [{"title": f"anime{i}"} for i in range(4)]},
+        "get_channel_list": {"items_lists": {"page": {"total": 12},
+            "seasons_list": [{"meta": {"name": f"season{i}"}} for i in range(2)],
+            "series_list": [{"meta": {"name": f"series{i}"}} for i in range(2)]}},
+        "get_articles": {"articles": [{"title": f"article{i}"} for i in range(4)]},
+        "get_followings": {"list": [{"uname": f"follow{i}"} for i in range(4)]},
+    })
+    async def favs(mid, credential=None):
+        return {"list": [{"title": f"fav{i}", "attr": 0} for i in range(4)] + [{"title": "private-folder", "attr": 1}]}
+    monkeypatch.setattr(user_cmd.favorite_list, "get_video_favorite_list", favs)
+
     data = _data(runner.invoke(app, ["user", "info", "2"]))
-    assert data["sections"] == {"videos": 9, "favs": 7, "bangumi": 6, "cinema": 5,
-                                "articles": 4, "album": 3, "audio": 2, "opus": 1}
+    sections = data["sections"]
+    assert sections["videos"] == {"count": 9, "preview": ["video0", "video1", "video2"]}
+    assert sections["coins"] == {"preview": ["coin0", "coin1", "coin2"]}
+    assert sections["likes"] == {"preview": ["like0", "like1", "like2"]}
+    assert sections["favs"] == {"count": 7, "preview": ["fav0", "fav1", "fav2"]}
+    assert "private-folder" not in json.dumps(sections)
+    assert sections["bangumi"] == {"count": 6, "preview": ["anime0", "anime1", "anime2"]}
+    assert sections["cinema"] == {"count": 5}
+    assert sections["games"] == {"count": 10, "preview": ["game0", "game1", "game2"]}
+    assert sections["collections"] == {"count": 12, "preview": ["season0", "season1", "series0"]}
+    assert sections["articles"] == {"count": 4, "preview": ["article0", "article1", "article2"]}
+    assert sections["following"] == {"count": 2, "preview": ["follow0", "follow1", "follow2"]}
+    assert sections["album"] == {"count": 3} and sections["audio"] == {"count": 2} and sections["opus"] == {"count": 1}
     assert data["more_with"] == "bili user coins|favs|bangumi|likes|games|collections|articles|following|followers 2"
-    FakeApi.responses[nav_url] = RuntimeError("offline")
-    data = _data(runner.invoke(app, ["user", "info", "2"]))
-    assert "sections" not in data and "more_with" in data
-    assert runner.invoke(app, ["user", "info", "2"]).exit_code == 0
-    FakeApi.responses[nav_url] = {"navnum": 1}
+
+    FakeUser.calls = []
+    FakeApi.calls = []
     raw = _data(runner.invoke(app, ["--raw", "user", "info", "2"]))
     assert "navnum" in raw
+    assert not {call["method"] for call in FakeUser.calls} & {"get_videos", "get_subscribed_bangumi", "get_channel_list", "get_articles", "get_followings"}
+    assert len([call for call in FakeApi.calls if call.url != nav_url]) == 0
+
+
+def test_info_preview_privacy_failures_and_empty(patch_user, monkeypatch):
+    _login()
+    nav_url = user_cmd.NAVNUM_URL
+    FakeApi.responses.update({nav_url: {"video": 3, "favourite": {"guest": 7}},
+        user_cmd.COIN_URL: _privacy_error(), user_cmd.LIKE_URL: ResponseCodeException(-352, "risk", {}),
+        user_cmd.GAME_URL: {"total_count": 0, "list": []}})
+    async def favs_none(mid, credential=None):
+        return None
+    monkeypatch.setattr(user_cmd.favorite_list, "get_video_favorite_list", favs_none)
+    FakeUser.responses.update({"get_videos": {"list": {"vlist": [{"title": "video"}]}},
+        "get_subscribed_bangumi": {"list": []}, "get_channel_list": {"items_lists": {"page": {"total": 0}}},
+        "get_articles": {"pn": 1, "ps": 3}, "get_followings": {"total": 4, "list": []}})
+    data = _data(runner.invoke(app, ["user", "info", "2"]))
+    assert data["sections"]["coins"] == {"hidden": True}
+    assert data["sections"]["favs"] == {"count": 7, "hidden": True}
+    assert "likes" not in data["sections"]
+    assert data["sections"]["videos"] == {"count": 3, "preview": ["video"]}
+    assert data["sections"]["articles"]["preview"] == []
+    assert "more_with" in data
+
+    FakeApi.responses[nav_url] = RuntimeError("offline")
+    FakeApi.responses[user_cmd.COIN_URL] = [{"title": "coin"}]
+    FakeApi.responses[user_cmd.LIKE_URL] = {"list": []}
+    data = _data(runner.invoke(app, ["user", "info", "2"]))
+    assert data["sections"]["videos"] == {"preview": ["video"]}
+    assert "count" not in data["sections"]["videos"]
+    assert "more_with" in data
+    assert runner.invoke(app, ["user", "info", "2"]).exit_code == 0
 
 
 def test_videos_front_items_deduplicate_and_metrics(patch_user):

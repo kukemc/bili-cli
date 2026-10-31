@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -24,6 +25,7 @@ LIKE_URL = "https://api.bilibili.com/x/space/like/video"
 GAME_URL = "https://api.bilibili.com/x/space/lastplaygame/v2"
 COIN_URL = "https://api.bilibili.com/x/space/coin/video"
 PRIVACY_CODE = 53013  # 用户隐私设置未公开
+PREVIEW = 3
 BANGUMI_TYPES = {"bangumi": user.BangumiType.BANGUMI, "cinema": user.BangumiType.DRAMA}
 FOLLOW_STATUS = {1: "想看", 2: "在看", 3: "看过"}
 
@@ -46,6 +48,31 @@ async def _public(fetch: Callable[[], Awaitable[Any]]) -> Any:
         raise
 
 
+async def _preview(
+    fetch: Callable[[], Awaitable[Any]],
+    pick: Callable[[Any], list[str]],
+    count: Callable[[Any], Any] | None = None,
+) -> dict[str, Any]:
+    """取一个板块的预览：{"preview": [...]} / {"hidden": True} / {}（出错）。"""
+    try:
+        data = await _public(fetch)
+        if data is None:
+            return {"hidden": True}
+        result = {}
+        if count is not None:
+            total = count(data)
+            if total is not None:
+                result["count"] = total
+        result["preview"] = pick(data)[:PREVIEW]
+        return result
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _public_folders(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [f for f in data.get("list") or [] if not (f.get("attr") or 0) & 1]
+
+
 def _hidden(mid: int) -> dict[str, Any]:
     return {"mid": mid, "hidden": True, "items": []}
 
@@ -64,11 +91,12 @@ async def resolve_mid(who: str) -> int:
 
 @app.command()
 def info(who: str = USER_ARG) -> None:
-    """用户资料：昵称、签名、等级、认证、粉丝 / 关注数、总播放与获赞、直播间，以及主页各板块的数量（sections，只是数量，对方没公开的板块也会有数，看内容用 more_with 里的命令）。"""
+    """用户资料，加上主页各板块的总览：数量和前几条预览（投稿、投币、点赞、收藏夹、追番、游戏、合集、专栏、关注…）。hidden 表示对方没公开；要看全部用 more_with 里的命令。"""
 
     async def body():
         mid = await resolve_mid(who)
-        u = user.User(mid, credential=config.optional_credential())
+        cred = config.optional_credential()
+        u = user.User(mid, credential=cred)
         data = await u.get_user_info()
         rel = await u.get_relation_info()
         try:
@@ -76,7 +104,7 @@ def info(who: str = USER_ARG) -> None:
         except Exception:  # noqa: BLE001
             up = {}
         try:
-            nav = await Api(url=NAVNUM_URL, method="GET", credential=config.optional_credential()).update_params(mid=mid).result
+            nav = await Api(url=NAVNUM_URL, method="GET", credential=cred).update_params(mid=mid).result
         except Exception:  # noqa: BLE001
             nav = {}
         if output.settings.raw:
@@ -99,17 +127,77 @@ def info(who: str = USER_ARG) -> None:
         if live.get("roomid"):
             out["live"] = {"live_now": live.get("liveStatus") == 1, "title": live.get("title"), "url": f"https://live.bilibili.com/{live.get('roomid')}"}
         out["videos_with"] = f"bili user videos {data.get('mid')}"
-        if nav:
-            out["sections"] = {
-                "videos": nav.get("video"),
-                "favs": (nav.get("favourite") or {}).get("guest"),
-                "bangumi": nav.get("bangumi"),
-                "cinema": nav.get("cinema"),
-                "articles": nav.get("article"),
-                "album": nav.get("album"),
-                "audio": nav.get("audio"),
-                "opus": nav.get("opus"),
-            }
+        previews = await asyncio.gather(
+            _preview(
+                lambda: u.get_videos(pn=1, ps=PREVIEW),
+                lambda d: [v.get("title") or "" for v in (d.get("list") or {}).get("vlist") or []],
+            ),
+            _preview(
+                lambda: Api(url=COIN_URL, method="GET", credential=cred).update_params(vmid=mid).result,
+                lambda d: [v.get("title") or "" for v in d or []],
+            ),
+            _preview(
+                lambda: Api(url=LIKE_URL, method="GET", credential=cred).update_params(vmid=mid).result,
+                lambda d: [v.get("title") or "" for v in d.get("list") or []],
+            ),
+            _preview(
+                lambda: favorite_list.get_video_favorite_list(mid, credential=cred),
+                lambda d: [f.get("title") or "" for f in _public_folders(d)],
+            ),
+            _preview(
+                lambda: u.get_subscribed_bangumi(type_=user.BangumiType.BANGUMI, pn=1, ps=PREVIEW),
+                lambda d: [v.get("title") or "" for v in d.get("list") or []],
+            ),
+            _preview(
+                lambda: Api(url=GAME_URL, method="GET", credential=cred).update_params(mid=mid).result,
+                lambda d: [g.get("game_name") or "" for g in d.get("list") or []],
+                count=lambda d: d.get("total_count"),
+            ),
+            _preview(
+                lambda: u.get_channel_list(pn=1, ps=PREVIEW),
+                lambda d: [
+                    (entry.get("meta") or {}).get("name") or ""
+                    for key in ("seasons_list", "series_list")
+                    for entry in (d.get("items_lists") or {}).get(key) or []
+                ],
+                count=lambda d: ((d.get("items_lists") or {}).get("page") or {}).get("total"),
+            ),
+            _preview(
+                lambda: u.get_articles(pn=1, ps=PREVIEW),
+                lambda d: [a.get("title") or "" for a in d.get("articles") or []],
+            ),
+            _preview(
+                lambda: u.get_followings(pn=1, ps=PREVIEW),
+                lambda d: [f.get("uname") or "" for f in d.get("list") or []],
+            ),
+        )
+        preview_by_section = dict(zip(
+            ("videos", "coins", "likes", "favs", "bangumi", "games", "collections", "articles", "following"),
+            previews,
+        ))
+        nav = nav or {}
+        counts = {
+            "videos": nav.get("video"),
+            "coins": None,
+            "likes": None,
+            "favs": (nav.get("favourite") or {}).get("guest"),
+            "bangumi": nav.get("bangumi"),
+            "cinema": nav.get("cinema"),
+            "games": None,
+            "collections": None,
+            "articles": nav.get("article"),
+            "following": rel.get("following"),
+            "album": nav.get("album"),
+            "audio": nav.get("audio"),
+            "opus": nav.get("opus"),
+        }
+        sections = {}
+        for name, total in counts.items():
+            section = {"count": total} if total is not None else {}
+            section.update(preview_by_section.get(name) or {})
+            if section:
+                sections[name] = section
+        out["sections"] = sections
         out["more_with"] = f"bili user coins|favs|bangumi|likes|games|collections|articles|following|followers {mid}"
         return out
 
@@ -235,7 +323,7 @@ def favs(who: str = USER_ARG) -> None:
         data = await _public(lambda: favorite_list.get_video_favorite_list(mid, credential=cred))
         if data is None:
             return _hidden(mid)
-        public = [f for f in data.get("list") or [] if not (f.get("attr") or 0) & 1]
+        public = _public_folders(data)
         if output.settings.raw:
             return {**data, "list": public, "count": len(public)}
         items = [
