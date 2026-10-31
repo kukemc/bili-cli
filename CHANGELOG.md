@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added
+- `bili user coins <UID|昵称>`：对方在主页公开的最近投币（视频、投了几个币、投币时间），输出不含 IP 属地。
+- `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数、是否默认夹）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。
+- `bili user bangumi <UID|昵称> --type bangumi|cinema`：对方公开的追番 / 追剧，`--page` / `--size` 翻页，有下一页时给 `next_with`。
+- 三条命令都需要登录。对方没公开时返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
+- 与文档的差异：追番 `--size` 最大 30（B 站超过 30 返回 -400）；`follow_status` 线上只见到 2（在看），按文档 1 想看 / 2 在看 / 3 看过映射，未知值原样保留；看别人时 `progress` 为空串，输出 null；收藏夹未公开时接口是 code 0 + data null 而不是错误码。
+
 ## [1.2.1] - 2026-10-26
 
 ### Fixed
