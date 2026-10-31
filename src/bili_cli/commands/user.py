@@ -14,15 +14,26 @@ from .. import config, output
 from ..errors import BiliError
 from ..runtime import iso_time, run, strip_html
 
-app = typer.Typer(help="查看任意用户：资料、粉丝数、投稿列表、公开的投币 / 收藏夹 / 追番；关注 / 取关、拉黑 / 解除拉黑。", no_args_is_help=True)
+app = typer.Typer(help="查看任意用户：资料与主页总览、投稿（置顶 / 代表作在前）、关注与粉丝、公开的投币 / 收藏夹 / 追番 / 点赞 / 游戏、合集、专栏；关注 / 取关、拉黑 / 解除拉黑。", no_args_is_help=True)
 
 USER_ARG = typer.Argument(..., help="UID，或完整昵称（会用搜索找到昵称完全一致的用户）。")
 VIDEO_ORDERS = {"new": user.VideoOrder.PUBDATE, "views": user.VideoOrder.VIEW, "favorites": user.VideoOrder.FAVORITE}
 
+NAVNUM_URL = "https://api.bilibili.com/x/space/navnum"
+LIKE_URL = "https://api.bilibili.com/x/space/like/video"
+GAME_URL = "https://api.bilibili.com/x/space/lastplaygame/v2"
 COIN_URL = "https://api.bilibili.com/x/space/coin/video"
 PRIVACY_CODE = 53013  # 用户隐私设置未公开
 BANGUMI_TYPES = {"bangumi": user.BangumiType.BANGUMI, "cinema": user.BangumiType.DRAMA}
 FOLLOW_STATUS = {1: "想看", 2: "在看", 3: "看过"}
+
+
+def _next_with(cmd: str, mid: int, page: int, size: int, total: Any, default_size: int, extra: str = "") -> str | None:
+    """有下一页时给出翻页命令。"""
+    if not total or page * size >= total:
+        return None
+    s = f"bili user {cmd} {mid}{extra} --page {page + 1}"
+    return s if size == default_size else f"{s} --size {size}"
 
 
 async def _public(fetch: Callable[[], Awaitable[Any]]) -> Any:
@@ -53,18 +64,23 @@ async def resolve_mid(who: str) -> int:
 
 @app.command()
 def info(who: str = USER_ARG) -> None:
-    """用户资料：昵称、签名、等级、认证、粉丝 / 关注数、总播放与获赞、直播间。"""
+    """用户资料：昵称、签名、等级、认证、粉丝 / 关注数、总播放与获赞、直播间，以及主页各板块的数量（sections，只是数量，对方没公开的板块也会有数，看内容用 more_with 里的命令）。"""
 
     async def body():
-        u = user.User(await resolve_mid(who), credential=config.optional_credential())
+        mid = await resolve_mid(who)
+        u = user.User(mid, credential=config.optional_credential())
         data = await u.get_user_info()
         rel = await u.get_relation_info()
         try:
             up = await u.get_up_stat()  # needs login; skip quietly when anonymous
         except Exception:  # noqa: BLE001
             up = {}
+        try:
+            nav = await Api(url=NAVNUM_URL, method="GET", credential=config.optional_credential()).update_params(mid=mid).result
+        except Exception:  # noqa: BLE001
+            nav = {}
         if output.settings.raw:
-            return {"info": data, "relation": rel, "up_stat": up}
+            return {"info": data, "relation": rel, "up_stat": up, "navnum": nav}
         official = data.get("official") or {}
         live = data.get("live_room") or {}
         out: dict[str, Any] = {
@@ -83,9 +99,36 @@ def info(who: str = USER_ARG) -> None:
         if live.get("roomid"):
             out["live"] = {"live_now": live.get("liveStatus") == 1, "title": live.get("title"), "url": f"https://live.bilibili.com/{live.get('roomid')}"}
         out["videos_with"] = f"bili user videos {data.get('mid')}"
+        if nav:
+            out["sections"] = {
+                "videos": nav.get("video"),
+                "favs": (nav.get("favourite") or {}).get("guest"),
+                "bangumi": nav.get("bangumi"),
+                "cinema": nav.get("cinema"),
+                "articles": nav.get("article"),
+                "album": nav.get("album"),
+                "audio": nav.get("audio"),
+                "opus": nav.get("opus"),
+            }
+        out["more_with"] = f"bili user coins|favs|bangumi|likes|games|collections|articles|following|followers {mid}"
         return out
 
     run(body)
+
+
+def _archive_card(v: dict[str, Any], label: str) -> dict[str, Any]:
+    duration = v.get("duration")
+    stat = v.get("stat") or {}
+    return {
+        "bvid": v.get("bvid"),
+        "title": v.get("title"),
+        "length": f"{duration // 60:02d}:{duration % 60:02d}" if duration is not None else None,
+        "play": stat.get("view"),
+        "comment": stat.get("reply"),
+        "danmaku": stat.get("danmaku"),
+        "pubdate": iso_time(v.get("pubdate")),
+        "label": label,
+    }
 
 
 @app.command()
@@ -96,33 +139,54 @@ def videos(
     page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
     size: int = typer.Option(20, "--size", min=1, max=50, help="每页条数。"),
 ) -> None:
-    """用户的投稿列表，含播放、评论、弹幕数，适合找爆款或追某个系列。"""
+    """用户的投稿列表，含播放、评论、弹幕数，适合找爆款或追某个系列。第一页会把置顶和代表作排在最前面，带 label。"""
 
     async def body():
         if order not in VIDEO_ORDERS:
             raise BiliError("invalid_argument", f"--order 只能是 {' / '.join(VIDEO_ORDERS)} 之一。")
         mid = await resolve_mid(who)
-        data = await user.User(mid, credential=config.optional_credential()).get_videos(
-            pn=page, ps=size, keyword=keyword, order=VIDEO_ORDERS[order]
-        )
+        u = user.User(mid, credential=config.optional_credential())
+        data = await u.get_videos(pn=page, ps=size, keyword=keyword, order=VIDEO_ORDERS[order])
         if output.settings.raw:
+            for v in (data.get("list") or {}).get("vlist") or []:
+                v.pop("ip", None)
             return data
+        items = [
+            {
+                "bvid": v.get("bvid"),
+                "title": v.get("title"),
+                "length": v.get("length"),
+                "play": v.get("play"),
+                "comment": v.get("comment"),
+                "danmaku": v.get("video_review"),
+                "pubdate": iso_time(v.get("created")),
+            }
+            for v in (data.get("list") or {}).get("vlist") or []
+        ]
+        if page == 1 and not keyword:
+            try:
+                top = await u.get_top_videos()
+            except Exception:  # noqa: BLE001
+                top = None
+            try:
+                mp = await u.get_masterpiece() or []
+            except Exception:  # noqa: BLE001
+                mp = []
+            front = ([(top, "置顶")] if top else []) + [(m, "代表作") for m in mp]
+            seen = set()
+            front_items = []
+            for v, label in front:
+                bvid = v.get("bvid")
+                if bvid in seen:
+                    continue
+                seen.add(bvid)
+                front_items.append(_archive_card(v, label))
+            items = front_items + [v for v in items if v.get("bvid") not in seen]
         return {
             "mid": mid,
             "page": page,
             "total": (data.get("page") or {}).get("count"),
-            "items": [
-                {
-                    "bvid": v.get("bvid"),
-                    "title": v.get("title"),
-                    "length": v.get("length"),
-                    "play": v.get("play"),
-                    "comment": v.get("comment"),
-                    "danmaku": v.get("video_review"),
-                    "pubdate": iso_time(v.get("created")),
-                }
-                for v in (data.get("list") or {}).get("vlist") or []
-            ],
+            "items": items,
         }
 
     run(body)
@@ -228,10 +292,138 @@ def bangumi(
                 for v in data.get("list") or []
             ],
         }
-        if data.get("total") and page * size < data["total"]:
-            out["next_with"] = f"bili user bangumi {mid} --type {type_} --page {page + 1}"
-            if size != 20:
-                out["next_with"] += f" --size {size}"
+        nw = _next_with("bangumi", mid, page, size, data.get("total"), 20, extra=f" --type {type_}")
+        if nw:
+            out["next_with"] = nw
+        return out
+
+    run(body)
+
+
+@app.command()
+def likes(who: str = USER_ARG) -> None:
+    """用户公开的最近点赞视频（最多 20 个，没有点赞时间）。对方没公开时 hidden 为 true。"""
+
+    async def body():
+        cred = config.require_credential()
+        mid = await resolve_mid(who)
+        data = await _public(lambda: Api(url=LIKE_URL, method="GET", credential=cred).update_params(vmid=mid).result)
+        if data is None:
+            return _hidden(mid)
+        if output.settings.raw:
+            for v in data.get("list") or []:
+                v.pop("ip", None)
+            return data
+        return {
+            "mid": mid,
+            "hidden": False,
+            "items": [
+                {
+                    "bvid": v.get("bvid"),
+                    "title": v.get("title"),
+                    "owner": (v.get("owner") or {}).get("name"),
+                    "play": (v.get("stat") or {}).get("view"),
+                    "watch_with": f"bili video watch {v.get('bvid')}",
+                }
+                for v in data.get("list") or []
+            ],
+        }
+
+    run(body)
+
+
+@app.command()
+def games(who: str = USER_ARG) -> None:
+    """用户公开的最近玩过的游戏。对方没公开时 hidden 为 true。"""
+
+    async def body():
+        cred = config.require_credential()
+        mid = await resolve_mid(who)
+        data = await _public(lambda: Api(url=GAME_URL, method="GET", credential=cred).update_params(mid=mid).result)
+        if data is None:
+            return _hidden(mid)
+        if output.settings.raw:
+            return data
+        return {
+            "mid": mid,
+            "hidden": False,
+            "total": data.get("total_count"),
+            "items": [
+                {"name": g.get("game_name"), "tags": g.get("game_tags"), "url": g.get("detail_url")}
+                for g in data.get("list") or []
+            ],
+        }
+
+    run(body)
+
+
+@app.command()
+def collections(
+    who: str = USER_ARG,
+    page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
+    size: int = typer.Option(20, "--size", min=1, help="每页条数。"),
+) -> None:
+    """用户的合集和系列：名称、视频数。"""
+
+    async def body():
+        cred = config.require_credential()
+        mid = await resolve_mid(who)
+        data = await _public(lambda: user.User(mid, credential=cred).get_channel_list(pn=page, ps=size))
+        if data is None:
+            return _hidden(mid)
+        if output.settings.raw:
+            return data
+        lists = data.get("items_lists") or {}
+        items = []
+        for key, kind, id_key in (("seasons_list", "合集", "season_id"), ("series_list", "系列", "series_id")):
+            for entry in lists.get(key) or []:
+                meta = entry.get("meta") or {}
+                items.append({"kind": kind, "id": meta.get(id_key), "title": meta.get("name"), "count": meta.get("total")})
+        total = (lists.get("page") or {}).get("total")
+        out = {"mid": mid, "hidden": False, "page": page, "total": total, "items": items}
+        nw = _next_with("collections", mid, page, size, total, 20)
+        if nw:
+            out["next_with"] = nw
+        return out
+
+    run(body)
+
+
+@app.command()
+def articles(
+    who: str = USER_ARG,
+    page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
+    size: int = typer.Option(20, "--size", min=1, help="每页条数。"),
+) -> None:
+    """用户投稿的专栏文章：标题、发布时间、阅读数。"""
+
+    async def body():
+        cred = config.require_credential()
+        mid = await resolve_mid(who)
+        data = await _public(lambda: user.User(mid, credential=cred).get_articles(pn=page, ps=size))
+        if data is None:
+            return _hidden(mid)
+        if output.settings.raw:
+            return data
+        out = {
+            "mid": mid,
+            "hidden": False,
+            "page": page,
+            "total": data.get("count"),
+            "items": [
+                {
+                    "id": a.get("id"),
+                    "title": a.get("title"),
+                    "published_at": iso_time(a.get("publish_time")),
+                    "views": (a.get("stats") or {}).get("view"),
+                    "url": f"https://www.bilibili.com/read/cv{a.get('id')}",
+                }
+                for a in data.get("articles") or []
+            ],
+        }
+        nw = _next_with("articles", mid, page, size, data.get("count"), 20)
+        if nw:
+            out["next_with"] = nw
         return out
 
     run(body)
@@ -329,31 +521,53 @@ def blocked(
     run(body)
 
 
+async def _follow_list(who: str | None, page: int, size: int, method: str, cmd: str) -> dict[str, Any]:
+    cred = config.require_credential()
+    mid = await resolve_mid(who) if who else config.my_mid(cred)
+    data = await _public(lambda: getattr(user.User(mid, credential=cred), method)(pn=page, ps=size))
+    if data is None:
+        return _hidden(mid)
+    if output.settings.raw:
+        return data
+    out = {
+        "mid": mid,
+        "page": page,
+        "total": data.get("total"),
+        "items": [
+            {
+                "mid": f.get("mid"),
+                "name": f.get("uname"),
+                "sign": f.get("sign") or None,
+                "followed_at": iso_time(f.get("mtime")),
+                **({"mutual": f.get("attribute") == 6} if not who else {}),
+            }
+            for f in data.get("list") or []
+        ],
+    }
+    if who:
+        nw = _next_with(cmd, mid, page, size, data.get("total"), 50)
+        if nw:
+            out["next_with"] = nw
+    return out
+
+
 @app.command()
 def following(
+    who: str | None = typer.Argument(None, help="UID 或完整昵称；不填就是我自己。"),
     page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
     size: int = typer.Option(50, "--size", min=1, max=50, help="每页条数。"),
 ) -> None:
-    """我关注的人，按关注时间从新到旧。"""
+    """我关注的人（默认），或别人公开的关注列表，按关注时间从新到旧。"""
 
-    async def body():
-        cred = config.require_credential()
-        data = await user.User(config.my_mid(cred), credential=cred).get_followings(pn=page, ps=size)
-        if output.settings.raw:
-            return data
-        return {
-            "page": page,
-            "total": data.get("total"),
-            "items": [
-                {
-                    "mid": f.get("mid"),
-                    "name": f.get("uname"),
-                    "sign": f.get("sign") or None,
-                    "mutual": f.get("attribute") == 6,
-                    "followed_at": iso_time(f.get("mtime")),
-                }
-                for f in data.get("list") or []
-            ],
-        }
+    run(lambda: _follow_list(who, page, size, "get_followings", "following"))
 
-    run(body)
+
+@app.command()
+def followers(
+    who: str | None = typer.Argument(None, help="UID 或完整昵称；不填就是我自己。"),
+    page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
+    size: int = typer.Option(50, "--size", min=1, max=50, help="每页条数。"),
+) -> None:
+    """我的粉丝（默认），或别人的粉丝列表，按关注时间从新到旧。"""
+
+    run(lambda: _follow_list(who, page, size, "get_followers", "followers"))
