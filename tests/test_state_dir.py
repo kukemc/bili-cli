@@ -1,4 +1,5 @@
 import json
+import threading
 
 import pytest
 from typer.testing import CliRunner
@@ -89,3 +90,24 @@ def test_mark_seen_failure_does_not_raise(monkeypatch, tmp_path, capsys):
     cards.mark_seen("BV1test")  # must not raise
 
     assert "警告" in capsys.readouterr().err
+
+def test_ensure_state_writable_survives_concurrency(monkeypatch, tmp_path):
+    """A fixed probe filename made concurrent writers fail with WinError 32; a unique temp file must not."""
+    monkeypatch.setenv("BILI_CLI_STATE_DIR", str(tmp_path / "state"))
+    errors: list[Exception] = []
+
+    def worker():
+        for _ in range(50):
+            try:
+                guard._ensure_state_writable()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert list((tmp_path / "state").iterdir()) == []

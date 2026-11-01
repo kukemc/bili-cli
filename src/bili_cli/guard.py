@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from typing import Any
 
@@ -72,11 +73,11 @@ def _ensure_state_writable() -> None:
     if _disabled():
         return
     home = config.state_home()
-    probe = home / ".bili-cli-write-test"
     try:
         home.mkdir(parents=True, exist_ok=True)
-        probe.write_text("", encoding="utf-8")
-        probe.unlink()
+        # A unique temp file: a fixed probe name races when several bili processes run at once.
+        with tempfile.TemporaryFile(dir=home):
+            pass
     except OSError as exc:
         raise BiliError(
             "invalid_argument",
