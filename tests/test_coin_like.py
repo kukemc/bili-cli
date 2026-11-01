@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from bilibili_api import exceptions as bex
 from typer.testing import CliRunner
 
 from bili_cli import guard
@@ -18,10 +19,17 @@ def isolated_home(tmp_path, monkeypatch):
 class FakeVideo:
     """Stands in for bilibili_api.video.Video without touching the network or real coins."""
 
-    def __init__(self, paid_like: bool = False, already_liked: bool = False, like_raises: Exception | None = None):
+    def __init__(
+        self,
+        paid_like: bool = False,
+        already_liked: bool = False,
+        like_raises: Exception | None = None,
+        relation_raises_after_coin: bool = False,
+    ):
         self.paid_like = paid_like
         self.liked = already_liked
         self.like_raises = like_raises
+        self.relation_raises_after_coin = relation_raises_after_coin
         self.like_calls = 0
         self.coins = 0
 
@@ -37,6 +45,8 @@ class FakeVideo:
         return {}
 
     async def get_relation(self):
+        if self.relation_raises_after_coin and self.coins:
+            raise RuntimeError("relation timeout")
         return {"like": self.liked, "coin": self.coins, "favorite": False, "attention": False}
 
 
@@ -77,8 +87,15 @@ def test_coin_is_recorded_before_the_like(monkeypatch):
     data, calls = _run_coin(monkeypatch, fake)
     assert calls.index(("record", "coin")) < calls.index(("check", "video_like"))
     assert ("record", "video_like") not in calls
-    assert data["like_error"]["code"] == "api_error"
+    assert data["like_error"]["code"] == "internal_error"
     assert "network down" in data["like_error"]["message"]
+
+
+def test_like_error_keeps_the_bili_error_code(monkeypatch):
+    """A -352 risk-control rejection must surface as risk_control so the agent stops."""
+    fake = FakeVideo(paid_like=False, like_raises=bex.ResponseCodeException(-352, "风控拦截", {}))
+    data, _ = _run_coin(monkeypatch, fake)
+    assert data["like_error"]["code"] == "risk_control"
 
 
 def test_coin_still_succeeds_when_video_like_is_rate_limited(monkeypatch):
@@ -88,6 +105,15 @@ def test_coin_still_succeeds_when_video_like_is_rate_limited(monkeypatch):
     assert data["like_error"]["code"] == "rate_limited"
     assert ("record", "video_like") not in calls
     assert ("record", "coin") in calls
+
+
+def test_coin_succeeds_when_reading_the_relation_fails(monkeypatch):
+    """The coin is already spent and recorded; a failed relation read must not look like a failed coin."""
+    fake = FakeVideo(paid_like=False, relation_raises_after_coin=True)
+    data, calls = _run_coin(monkeypatch, fake, with_like=False)
+    assert ("record", "coin") in calls
+    assert data["relation_error"]["code"] == "internal_error"
+    assert "relation timeout" in data["relation_error"]["message"]
 
 
 def test_coin_like_does_not_repeat_when_library_reports_success(monkeypatch):
