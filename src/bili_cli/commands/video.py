@@ -15,7 +15,7 @@ import typer
 from bilibili_api import comment, video
 
 from .. import config, output
-from ..errors import BiliError
+from ..errors import BiliError, from_exception
 from ..runtime import iso_time, parse_video_id, run
 
 app = typer.Typer(help="读取视频信息、字幕、弹幕与 AI 总结。", no_args_is_help=True)
@@ -367,9 +367,37 @@ def coin(
         if output.settings.dry_run:
             return {"dry_run": True, "action": "video.coin", "params": {"bvid": bvid, "coins": coins, "like": with_like}}
         guard.check("coin", units=coins)
-        await v.pay_coin(num=coins, like=with_like)
+        paid = await v.pay_coin(num=coins, like=with_like) or {}
+        # 先记账再补赞：投币已经成功，重试就是重复花钱。点赞失败不能影响这一条。
         guard.record("coin", {"bvid": bvid, "coins": coins, "like": with_like}, "ok", units=coins)
-        return {"bvid": bvid, **await _relation(v, settle=True), **_watch_note(bvid)}
+
+        like_error = None
+        # 补赞前不再请求关系：开头那次 before 已经查过，少一次可能失败的读。
+        if with_like and not (isinstance(paid, dict) and paid.get("like")) and not before["liked"]:
+            # bilibili-api 17.4.2 把参数名写成 like（B 站要的是 select_like），--like 会被静默忽略，
+            # 所以这里显式补一次；补赞走 video_like 的限流和审计，失败也只记在 like_error 里。
+            try:
+                guard.check("video_like")
+                await v.like(status=True)
+                guard.record("video_like", {"bvid": bvid, "like": True}, "ok")
+            except Exception as exc:  # noqa: BLE001 - 点赞失败不能连累已经完成的投币
+                err = from_exception(exc)
+                like_error = {"code": err.code, "message": err.message}
+
+        try:
+            relation = await _relation(v, settle=True)
+        except Exception as exc:  # noqa: BLE001 - 关系读不到不代表投币失败
+            err = from_exception(exc)
+            out: dict[str, Any] = {
+                "bvid": bvid,
+                "relation_error": {"code": err.code, "message": err.message},
+                **_watch_note(bvid),
+            }
+        else:
+            out = {"bvid": bvid, **relation, **_watch_note(bvid)}
+        if like_error:
+            out["like_error"] = like_error
+        return out
 
     run(body)
 
