@@ -216,7 +216,7 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili upload video / edit / list / status / stats / zones` | 投稿、改稿（`--desc-at` 简介里 @ 人，`--video` 换源）、稿件管理、单稿数据（互动率、完播率） |
 | `bili upload chapters show / set / clear` | 分段章节 |
 | `bili me show / stats / set-sign / set-name / set-avatar` | 个人资料、创作中心数据 |
-| `bili data overview / trend / audience / fans / videos / video / diagnose` | 数据中心：累计与昨日增量、30 天趋势、观众画像、粉丝、稿件数据表、单稿诊断（3 秒退出率 / 封面点击倍数 / 播转粉率 / 同类分位） |
+| `bili data overview / trend / audience / fans / active-hours / videos / video / diagnose` | 数据中心：累计与昨日增量、30 天趋势、观众画像、粉丝、粉丝活跃时间（24 小时 / 星期分布 + 大盘对比）、稿件数据表、单稿诊断（3 秒退出率 / 封面点击倍数 / 播转粉率 / 同类分位） |
 | `bili asr setup local / setup cloud / status / use` | 语音转写引擎 |
 | `bili skills install / uninstall / status / show` | 把技能装进 Agent |
 | `bili mcp serve / install / uninstall` | MCP 服务与客户端配置 |

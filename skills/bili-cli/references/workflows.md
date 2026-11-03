@@ -167,6 +167,7 @@ bili data overview --period month      # 换周期：yesterday / week / month / 
 bili data trend --type play --days 30  # 每日增量：哪天爆了、哪天掉下去（like / favorite / coin / comment / danmaku / share / charge）
 bili data audience                     # 观众画像：粉丝 vs 路人的性别、年龄、省份、兴趣标签
 bili data fans --period week           # 涨粉/取关、活跃粉丝、粉丝来源、涨粉趋势、最活跃的粉丝
+bili data active-hours                 # 粉丝活跃时间：24 小时 / 星期分布、最活跃时段、大盘对比、最近 5 个稿件的发布时段
 bili data videos --limit 20 --sort completion   # 稿件数据表：播放、点赞、评论、涨粉、完播率
 bili data video <BV>                   # 单稿：观众画像、完播率、平均观看时长、省份、3 秒退出率、封面点击倍数、播转粉率、同类分位
 bili data diagnose --size 10           # 最近 10 个稿件的诊断指标横向比
@@ -184,6 +185,7 @@ bili data diagnose --size 10           # 最近 10 个稿件的诊断指标横�
 - **观众画像**：性别 / 年龄 / 地区由 B 站每周二更新前一周的数据；兴趣标签是另一套统计，更新周期不同，而且是**可多选的覆盖率**，`viewers_percent` 合计会超过 100%。
 - **封面点击**：接口每次返回的绝对值会变，命令只给 `cover_click_vs_peer_median`（相对**同类稿件中位**的倍数，不是你自己稿件的）和稳定的同类分位，不要当百分比用。
 - **粉丝**：`yesterday.fans_net` 是结算值；`fans.total` 是实时值。
+- **活跃时间**：`data active-hours` 的百分比是 B 站返回的 1/10000 分布（24 小时合计 100%），小时按北京时间；`gap_percent` 是「你的粉丝 − 大盘」的占比差，正数表示这个点你的粉丝比大盘更活跃，负数表示这个点你的粉丝相对少。`better_than_peers_percent` 是活跃粉丝的同类分位。
 - **charge**：B 站原始数值，单位未确认（按电池、元、分换算都对不上），不要当金额用。
 
 复盘时值得看的组合：
