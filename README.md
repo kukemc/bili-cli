@@ -271,6 +271,18 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 </details>
 
 <details>
+<summary>在沙箱 / 只读环境里，写操作为什么会报错？</summary>
+
+写操作成功后 bili-cli 要记一条本地记录（`ratelimit.json`、`audit.log`），默认写在配置目录。如果进程只能写某个工作区（沙箱、只读容器），这一步会失败。现在分两层处理：
+
+- 真正调用接口**之前**，`guard.check()` 会先确认状态目录可写；写不了就直接报错（此时还没有产生任何副作用），并在 hint 里提示设置 `BILI_CLI_STATE_DIR`。
+- 接口成功之后如果状态仍然写不进去，只往 stderr 打一条警告，命令仍返回 `ok: true`——不要因为记账失败让 Agent 误以为没发出去而重发。
+
+设置 `BILI_CLI_STATE_DIR` 指向一个可写目录即可把状态文件挪过去：`ratelimit.json`、`audit.log`、`seen.json` 会写到那里，登录凭证仍然留在 `BILI_CLI_HOME`（Windows：`%APPDATA%\bili-cli`）。确实不需要本地限流时，可以设 `BILI_CLI_NO_RATE_LIMIT=1` 跳过检查。
+
+</details>
+
+<details>
 <summary>凭证存在哪里？安全吗？</summary>
 
 Windows 在 `%APPDATA%\bili-cli\`，其他系统在 `~/.config/bili-cli/`（权限 600），只会发给 B 站自己的服务器。详见 [SECURITY.md](https://github.com/kukemc/bili-cli/blob/main/SECURITY.md)。

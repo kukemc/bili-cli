@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from typing import Any
 
@@ -44,7 +45,7 @@ DAY_SECONDS = 24 * 3600
 
 
 def _state_path():
-    return config.home() / "ratelimit.json"
+    return config.state_home() / "ratelimit.json"
 
 
 def _load() -> dict[str, list[float]]:
@@ -62,10 +63,35 @@ def _disabled() -> bool:
 MAX_AUTO_WAIT = 60
 
 
+def _ensure_state_writable() -> None:
+    """Refuse to run a write when the rate-limit state cannot be saved.
+
+    Checked *before* the API call: if the state dir is read-only, every write would
+    silently bypass the local limits (including the 5-coins-a-day cap), which is
+    worse than failing early with an actionable hint.
+    """
+    if _disabled():
+        return
+    home = config.state_home()
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        # A unique temp file: a fixed probe name races when several bili processes run at once.
+        with tempfile.TemporaryFile(dir=home):
+            pass
+    except OSError as exc:
+        raise BiliError(
+            "invalid_argument",
+            f"无法写入状态目录 {home}：{exc}",
+            hint="把 BILI_CLI_STATE_DIR 指向一个可写目录（例如工作区），或在明确接受无限流风险时设置 BILI_CLI_NO_RATE_LIMIT=1。",
+            detail={"state_dir": str(home)},
+        ) from exc
+
+
 def check(action: str, units: int = 1) -> None:
     """Raise rate_limited if `action` would exceed its local limit. `units` = how much one call uses (e.g. 2 coins)."""
     from . import output
 
+    _ensure_state_writable()
     try:
         _check(action, units)
     except BiliError as e:
@@ -114,15 +140,28 @@ def _check(action: str, units: int) -> None:
 
 
 def record(action: str, params: dict[str, Any], result: Any, units: int = 1) -> None:
-    """Remember a successful write for rate limiting and append it to the audit log."""
-    now = time.time()
-    state = _load()
-    keep = DAY_SECONDS if action in DAILY_LIMITS else WINDOW_SECONDS
-    state[action] = [t for t in state.get(action, []) if now - t < keep] + [now] * units
-    tmp = _state_path().with_suffix(".tmp")
-    tmp.write_text(json.dumps(state), encoding="utf-8")
-    os.replace(tmp, _state_path())
+    """Remember a successful write for rate limiting and append it to the audit log.
 
-    entry = {"time": now, "action": action, "params": params, "result": result}
-    with open(config.home() / "audit.log", "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    This runs *after* the action already happened, so a state-file write failure
+    must never turn a successful write into a failed command: an agent would see
+    the error and retry, sending the same comment / DM twice. Lose the local
+    bookkeeping, keep the result.
+    """
+    now = time.time()
+    try:
+        state = _load()
+        keep = DAY_SECONDS if action in DAILY_LIMITS else WINDOW_SECONDS
+        state[action] = [t for t in state.get(action, []) if now - t < keep] + [now] * units
+        home = config.state_home()
+        home.mkdir(parents=True, exist_ok=True)
+        tmp = _state_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp, _state_path())
+
+        entry = {"time": now, "action": action, "params": params, "result": result}
+        with open(home / "audit.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    except OSError as exc:
+        from . import output
+
+        output.info(f"警告：无法写入限流/审计状态（{exc}）；操作本身已经成功，继续。")

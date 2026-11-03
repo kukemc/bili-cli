@@ -4,7 +4,11 @@
 
 ## [Unreleased]
 
+### Added
+- `BILI_CLI_STATE_DIR`：把限流记录（`ratelimit.json`）、审计日志（`audit.log`）和已看列表（`seen.json`）写到指定目录，登录凭证仍留在 `BILI_CLI_HOME`。适合沙箱、只读容器这类只能写工作区的环境。
+
 ### Fixed
+- 写操作调用接口之前会先确认状态目录可写；写不了就直接报错（此时还没有副作用），hint 会提示设置 `BILI_CLI_STATE_DIR`。接口成功之后如果仍然写不进去，只往 stderr 打警告，命令保持成功——不会让 Agent 误以为没发出去而重发。
 - `bili video coin --like`：以前只投币、不点赞，返回却显示成功。原因是 `bilibili-api` 17.4.2 的 `pay_coin()` 把参数名写成了 `like`，而 B 站接口要的是 `select_like`，于是被静默忽略。现在投币成功后会先记账、再检查实际关系并显式补赞；补赞走 `video_like` 的限流和审计，失败只在输出里加 `like_error`；最后读取关系失败也返回成功，并用 `relation_error` 标出未确认。两者都不影响已经完成的投币。
 
 ## [1.2.1] - 2026-10-26
