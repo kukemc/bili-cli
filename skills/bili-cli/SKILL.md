@@ -51,7 +51,8 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 换源：用新视频文件替换已投稿件（单 P） | `bili upload edit <BV> --video new.mp4`（重新审核，联合投稿成员和活动保留） |
 | 简介里 @ 人（投稿或改稿） | `--desc "角色设计 @冬冰 " --desc-at 冬冰` |
 | 看自己的数据 | `bili me stats`（账号：播放、涨粉、播放端、超过多少同类 UP）、`bili upload stats <BV>`（单稿：互动率、完播率） |
-| 数据中心 | `bili data overview / trend / audience / fans / videos / video / diagnose`（累计与昨日增量、30 天趋势、观众画像、粉丝来源、稿件表、单稿诊断），用法和复盘套路见 [references/workflows.md](references/workflows.md) |
+| 数据中心 | `bili data overview / trend / audience / fans / active-hours / videos / video / diagnose`（累计与昨日增量、30 天趋势、观众画像、粉丝来源、粉丝活跃时间、稿件表、单稿诊断），用法和复盘套路见 [references/workflows.md](references/workflows.md) |
+| 什么时候发 | `bili data active-hours`：粉丝 24 小时 / 星期的活跃分布、最活跃时段，以及同样时段里大盘占比（`gap_percent` 正数说明这个点你的粉丝比大盘更活跃）；`recent_upload_slots` 是你最近 5 个稿件的发布时段 |
 | 研究别的 UP 主 | `bili user info <UID|昵称>`、`bili user videos <UID> --order views`（找爆款）/ `-k 系列名` |
 | 看关注的人发了什么 | `bili feed timeline`（关注动态）、`--type video` 只看新投稿、`--up <UID|昵称>` 只看一个人 |
 | 关注 / 取关 | `bili user follow <UID|昵称>`、`bili user unfollow <UID|昵称>`、`bili user following`（我关注的人）；只关注用户要求的或真正想长期看的人，不要批量关注 |
