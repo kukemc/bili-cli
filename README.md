@@ -113,7 +113,7 @@ $ bili dm send owner "今天科技区第二名很有意思：有人造了一块�
 ### 📊 看数据、做复盘
 - **单条稿件**：播放、每百次播放的点赞 / 收藏 / 投币率、**完播率、平均观看时长**
 - **整个账号**：播放、访客、涨粉和上一周期对比，手机 / 电脑播放占比，粉丝贡献了多少播放，**超过多少同类 UP 主**
-- **数据中心**：累计总量与昨日增量、30 天增量曲线、观众画像（粉丝 vs 路人的性别 / 年龄 / 省份 / 兴趣标签）、粉丝来源、稿件数据表，以及单稿的 **3 秒退出率、封面点击倍数、播转粉率**和同类分位（`bili data`）
+- **数据中心**：累计总量与昨日增量、30 天增量曲线、观众画像（粉丝 vs 路人的性别 / 年龄 / 省份 / 兴趣标签）、粉丝来源、稿件数据表，以及单稿的 **性别 / 年龄 / 兴趣标签、3 秒退出率、封面点击倍数、播转粉率**和同类分位（`bili data`）
 - **看别人**：任意 UP 主的资料、投稿（按播放排序找爆款、按关键词筛系列）和动态
 
 ### 🎛️ UP 主高级玩法
@@ -216,7 +216,7 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili upload video / edit / list / status / stats / zones` | 投稿、改稿（`--desc-at` 简介里 @ 人，`--video` 换源）、稿件管理、单稿数据（互动率、完播率） |
 | `bili upload chapters show / set / clear` | 分段章节 |
 | `bili me show / stats / set-sign / set-name / set-avatar` | 个人资料、创作中心数据 |
-| `bili data overview / trend / audience / fans / active-hours / videos / video / diagnose` | 数据中心：累计与昨日增量、30 天趋势、观众画像、粉丝、粉丝活跃时间（24 小时 / 星期分布 + 大盘对比）、稿件数据表、单稿诊断（3 秒退出率 / 封面点击倍数 / 播转粉率 / 同类分位） |
+| `bili data overview / trend / audience / fans / active-hours / videos / video / diagnose` | 数据中心：累计与昨日增量、30 天趋势、观众画像、粉丝、粉丝活跃时间（24 小时 / 星期分布 + 大盘对比）、稿件数据表、单稿诊断（性别 / 年龄 / 兴趣标签 / 3 秒退出率 / 封面点击倍数 / 播转粉率 / 同类分位） |
 | `bili asr setup local / setup cloud / status / use` | 语音转写引擎 |
 | `bili skills install / uninstall / status / show` | 把技能装进 Agent |
 | `bili mcp serve / install / uninstall` | MCP 服务与客户端配置 |

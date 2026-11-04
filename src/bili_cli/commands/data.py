@@ -38,6 +38,9 @@ TREND_TYPES = {"play": 1, "danmaku": 2, "comment": 3, "share": 4, "coin": 5, "fa
 
 AGE_KEYS = {"age_one": "0-16", "age_two": "16-25", "age_three": "25-40", "age_four": "40+"}
 
+# 查别人的稿件：archive 先返回 -403（访问权限不足），overview 返回 20980。
+ACCESS_DENIED_CODES = (-403, 20980)
+
 WEEKDAYS = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}
 
 
@@ -154,6 +157,26 @@ def _diagnose_metrics(stat: dict[str, Any]) -> dict[str, Any]:
     if better:
         out["better_than_peers_percent"] = better
     return out
+
+
+async def _own(cred: Credential, path: str, wanted: dict[str, Any]) -> dict[str, Any]:
+    """只读自己的稿件。
+
+    查别人的稿件时，`archive` 先返回 -403（访问权限不足，全局映射成 risk_control），
+    `overview` 返回 20980；两个都当 not_found 处理，否则 agent 会以为自己被风控了。
+    """
+    try:
+        return await get_data(cred, path, wanted) or {}
+    except BiliError as exc:
+        code = (exc.detail or {}).get("bili_code")
+        if code in ACCESS_DENIED_CODES:
+            raise BiliError(
+                "not_found",
+                "创作中心只能看自己的稿件，这个 ID 不在你的账号下。",
+                hint="用 `bili upload list` 找到自己的 BV 号；确认没有把别人的稿件当成自己的。",
+                detail={"bili_code": code},
+            ) from exc
+        raise
 
 
 @app.command()
@@ -466,17 +489,18 @@ def _pick_archive(data: dict[str, Any], wanted: dict[str, Any]) -> dict[str, Any
 
 @app.command()
 def video(target: str = typer.Argument(..., help="自己的稿件：BV 号、av 号或视频链接。")) -> None:
-    """单稿数据：完播率（和 `bili upload stats` 同一个数）+ 观众画像、省份、3 秒退出率、封面点击倍数、播转粉率。"""
+    """单稿数据：完播率（和 `bili upload stats` 同一个数）+ 观众画像（性别 / 年龄 / 兴趣）、省份、3 秒退出率、封面点击倍数、播转粉率。"""
 
     async def body():
         wanted = parse_video_id(target)
         cred = config.require_credential()
-        data = await get_data(cred, "/x/web/data/archive", wanted) or {}
+        data = await _own(cred, "/x/web/data/archive", wanted)
         diagnose = await get_data(cred, "/x/web/data/archive_diagnose/compare", {"size": 30}) or {}
         survey = await get_data(cred, "/x/web/data/survey", {"type": 1}) or {}
+        portrait = await _own(cred, "/x/web/data/archive_diagnose/overview", wanted)
         item = _pick_archive(diagnose, wanted)
         if output.settings.raw:
-            return {"archive": data, "diagnose": item, "survey": survey}
+            return {"archive": data, "diagnose": item, "survey": survey, "portrait": portrait}
         stat = data.get("stat") or {}
         play = data.get("play") or {}
         group = data.get("group") or {}
@@ -503,6 +527,38 @@ def video(target: str = typer.Argument(..., help="自己的稿件：BV 号、av 
             "avg_watch_seconds": play.get("avg_duration"),
             "regions": top_items({r.get("location"): r.get("count") for r in (data.get("area") or [])}, 10),
         }
+        gender = portrait.get("gender") or {}
+        ages = portrait.get("viewer_age") or {}
+        gender_total = (gender.get("male") or 0) + (gender.get("female") or 0)
+        age_total = sum(ages.get(key) or 0 for key in AGE_KEYS)
+        out["gender_percent"] = (
+            {"male": share(gender.get("male"), gender_total), "female": share(gender.get("female"), gender_total)}
+            if gender_total
+            else None
+        )
+        out["age_percent"] = {label: share(ages.get(key), age_total) for key, label in AGE_KEYS.items()} if age_total else None
+        tags = [
+            {"name": row.get("tag_name"), "weight": row.get("count")}
+            for row in (portrait.get("viewer_ty") or [])
+            if row.get("tag_name")
+        ]
+        # 接口每次返回的顺序不同，且并列值很多；按 (-权重, 名称) 排，结果才稳定。
+        out["interests"] = sorted(tags, key=lambda row: (-(row["weight"] or 0), row["name"]))[:10]
+        top_weights = [row["weight"] for row in out["interests"]]
+        out["interests_note"] = (
+            "兴趣标签可多选，同一观众会落在多个标签里。`weight` 是 B 站返回的相对权重，单位未确认，不要当百分比读。"
+            "这个接口每次返回的先后顺序不同（数值不变），并列时这里按名称排序，所以结果是稳定的；"
+            "但并列也意味着这一段样本还区分不出主次——"
+            + (
+                f"前 10 个里有 {top_weights.count(top_weights[0])} 个并列第一（{top_weights[0]}），看不出偏好的先后。"
+                if top_weights and top_weights.count(top_weights[0]) >= 3
+                else "如果前 10 个里大量并列，说明它们之间没有主次之分。"
+            )
+        )
+        out["portrait_note"] = (
+            "性别 / 年龄的原始值是计数，不是 1/10000 占比：实测随播放量成比例放大（性别约为播放的 0.28 倍、"
+            "年龄约为 0.59 倍），所以这里只给 *_percent。地域与上面的 regions 重复，没有重复输出。"
+        )
         if item:
             out["diagnose"] = _diagnose_metrics(item.get("stat") or {})
         else:
