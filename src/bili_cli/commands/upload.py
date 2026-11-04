@@ -588,6 +588,11 @@ async def _upload_file(cred: Credential, video: Path, line: vu.Lines | None) -> 
 
 def edit_blocker(view: dict[str, Any]) -> str | None:
     """Why this archive must be edited on the web instead, or None. build_edit can't carry these settings."""
+    # A deleted archive reports state -100 together with reply.state=1, so the
+    # comment branch would fire first and tell the user to fix comment settings
+    # for an archive that cannot be edited at all.
+    if (view.get("archive") or {}).get("state") == -100:
+        return "这个稿件已经删除，无法再修改。"
     if ((view.get("reply") or {}).get("state") or 0) != 0:
         return "这个稿件的评论区不是普通开放状态，命令行改稿可能把评论设置改回默认。"
     return None

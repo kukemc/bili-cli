@@ -28,3 +28,26 @@ def test_rejects_zero_aid():
 
 def test_accepts_own_archive():
     require_own_archive({"archive": {"aid": 117557465975506, "title": "mine"}}, "BV1JGxQ6jERt")
+
+
+def test_deleted_archive_reports_deletion_not_comment_settings():
+    """A deleted archive also carries reply.state=1; the message must name the real cause."""
+    from bili_cli.commands.upload import edit_blocker
+
+    reason = edit_blocker({
+        "archive": {"aid": 1, "state": -100},
+        "reply": {"state": 1},
+    })
+
+    assert reason is not None
+    assert "删除" in reason
+    assert "评论区" not in reason
+
+
+def test_comment_blocker_still_fires_for_live_archive():
+    from bili_cli.commands.upload import edit_blocker
+
+    reason = edit_blocker({"archive": {"aid": 1, "state": 0}, "reply": {"state": 1}})
+
+    assert reason is not None
+    assert "评论区" in reason
