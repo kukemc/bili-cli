@@ -593,6 +593,22 @@ def edit_blocker(view: dict[str, Any]) -> str | None:
     return None
 
 
+def require_own_archive(view: dict[str, Any], bvid: str) -> None:
+    """Fail loudly when the view does not describe one of the user's archives.
+
+    `archive/view` answers 200 for a bvid the user does not own, just with an
+    empty archive. build_edit then fills every field with defaults (aid 0,
+    copyright 0, empty tags), so a dry run reported success for a payload that
+    the real edit endpoint can only reject with -400.
+    """
+    if not (view.get("archive") or {}).get("aid"):
+        raise BiliError(
+            "not_found",
+            f"找不到自己的稿件 {bvid}。",
+            hint="只能改自己的稿件；确认 BV 号是否写错，或稿件是否已被删除。",
+        )
+
+
 def current_staffs(view: dict[str, Any]) -> list[dict[str, Any]]:
     """The joint-submission members as the edit endpoint wants them back (unchanged, so B 站 keeps their confirmations)."""
     return [{"title": s.get("staff_title") or s.get("apply_title"), "mid": s.get("apply_staff_mid")}
@@ -707,6 +723,7 @@ def edit(
             raise BiliError("invalid_argument", "没有要修改的内容。", hint="传 --title / --desc / --desc-at / --tag / --cover / --cover43 / --ai-declare / --video 中的至少一个。")
         desc_mentions = await _desc_mentions(desc_at)
         view = await _archive_view(cred, bvid)
+        require_own_archive(view, bvid)
         if reason := edit_blocker(view):
             raise BiliError("invalid_argument", reason, hint="请在网页端创作中心修改这个稿件。")
         if "tags" in changes and (bad := await _check_tags(cred, changes["tags"])):
