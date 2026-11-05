@@ -588,30 +588,9 @@ async def _upload_file(cred: Credential, video: Path, line: vu.Lines | None) -> 
 
 def edit_blocker(view: dict[str, Any]) -> str | None:
     """Why this archive must be edited on the web instead, or None. build_edit can't carry these settings."""
-    # A deleted archive reports state -100 together with reply.state=1, so the
-    # comment branch would fire first and tell the user to fix comment settings
-    # for an archive that cannot be edited at all.
-    if (view.get("archive") or {}).get("state") == -100:
-        return "这个稿件已经删除，无法再修改。"
     if ((view.get("reply") or {}).get("state") or 0) != 0:
         return "这个稿件的评论区不是普通开放状态，命令行改稿可能把评论设置改回默认。"
     return None
-
-
-def require_own_archive(view: dict[str, Any], bvid: str) -> None:
-    """Fail loudly when the view does not describe one of the user's archives.
-
-    `archive/view` answers 200 for a bvid the user does not own, just with an
-    empty archive. build_edit then fills every field with defaults (aid 0,
-    copyright 0, empty tags), so a dry run reported success for a payload that
-    the real edit endpoint can only reject with -400.
-    """
-    if not (view.get("archive") or {}).get("aid"):
-        raise BiliError(
-            "not_found",
-            f"找不到自己的稿件 {bvid}。",
-            hint="只能改自己的稿件；确认 BV 号是否写错，或稿件是否已被删除。",
-        )
 
 
 def current_staffs(view: dict[str, Any]) -> list[dict[str, Any]]:
@@ -728,7 +707,6 @@ def edit(
             raise BiliError("invalid_argument", "没有要修改的内容。", hint="传 --title / --desc / --desc-at / --tag / --cover / --cover43 / --ai-declare / --video 中的至少一个。")
         desc_mentions = await _desc_mentions(desc_at)
         view = await _archive_view(cred, bvid)
-        require_own_archive(view, bvid)
         if reason := edit_blocker(view):
             raise BiliError("invalid_argument", reason, hint="请在网页端创作中心修改这个稿件。")
         if "tags" in changes and (bad := await _check_tags(cred, changes["tags"])):
