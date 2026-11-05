@@ -49,6 +49,12 @@ STATES = {-2: "审核中", 0: "已发布", 1: "待审核", 2: "未通过"}
 # 代码块的换行与对齐都会丢失——代码请渲染成图片。
 ALLOWED_TAGS = ("p", "span", "br", "h1", "figure", "img", "figcaption", "a")
 
+# 专栏编辑器没有 AI 创作声明字段（投稿有，专栏没有）。这是正文级别的权宜之计：
+# 打开 `--ai` 就在末尾追加一句，关掉或再跑一次会自动替换/移除，不会重复堆叠。
+# 等编辑器真的提供官方字段时，把这里换成那个字段即可，调用方不用改。
+AI_NOTICE = "本内容由 AI 参与创作。"
+AI_NOTICE_RE = re.compile(r"\s*<p>\s*本内容由 AI 参与创作[^<]*</p>\s*$")
+
 TAG_RE = re.compile(r"<\s*([a-z0-9]+)", re.I)
 BR_RE = re.compile(r"<br\s*/?>", re.I)
 P_RE = re.compile(r"</p>", re.I)
@@ -128,6 +134,12 @@ def _plain_keep_lines(html: str) -> str:
     s = P_RE.sub("\n", s)
     s = ANY_TAG_RE.sub("", s)
     return re.sub(r"\n{3,}", "\n\n", s).strip()
+
+
+def _apply_ai_notice(html: str, enabled: bool) -> str:
+    """幂等：先摘掉已有的声明，再按开关决定加不加。"""
+    html = AI_NOTICE_RE.sub("", html).rstrip()
+    return html + f"\n<p>{AI_NOTICE}</p>" if enabled else html
 
 
 def _check_tags(html: str) -> list[str]:
@@ -222,6 +234,7 @@ def draft(
     category: Optional[int] = typer.Option(None, "--category", help="二级分类 ID；用 `bili article categories` 查。"),
     cover: Optional[str] = typer.Option(None, "--cover", help="封面图 URL（用 `bili article image` 得到）。"),
     original: bool = typer.Option(True, "--original/--reprint", help="原创还是转载。"),
+    ai: bool = typer.Option(False, "--ai/--no-ai", help="在正文末尾追加 AI 创作声明（专栏暂无官方字段，权宜之计）。"),
     cvid: Optional[int] = typer.Option(None, "--cvid", help="给了就更新这个草稿，否则新建。"),
 ) -> None:
     """新建一个草稿（或更新已有草稿）。发布用 `bili article publish`。"""
@@ -229,13 +242,14 @@ def draft(
     async def body():
         if len(title) > 40:
             raise BiliError("invalid_argument", "标题不能超过 40 字。")
-        html = _read_body(file, content)
-        if not html.strip():
+        raw = _read_body(file, content)
+        if not raw.strip():
             raise BiliError("invalid_argument", "正文不能为空。")
+        html = _apply_ai_notice(raw, ai)
         dropped = _check_tags(html)
         params: dict[str, Any] = {
             "cvid": cvid, "title": title, "category": category, "cover": bool(cover),
-            "original": original, "chars": len(_plain(html)),
+            "original": original, "ai": ai, "chars": len(_plain(html)),
         }
         if output.settings.dry_run:
             return {"dry_run": True, "action": "article.draft", "params": params, "dropped_tags": dropped}
@@ -334,6 +348,7 @@ def update(
     content: Optional[str] = typer.Option(None, "--content", help="新的正文 HTML 文本。"),
     title: Optional[str] = typer.Option(None, "--title", "-t", help="新标题；不给就沿用原标题。"),
     cover: Optional[str] = typer.Option(None, "--cover", help="新封面 URL；不给就沿用原封面。"),
+    ai: Optional[bool] = typer.Option(None, "--ai/--no-ai", help="追加/移除 AI 创作声明；不给就沿用正文现状。"),
 ) -> None:
     """原地编辑一篇已发布的文章。会重新进审核，cvid 与动态 ID 不变。"""
 
@@ -341,6 +356,8 @@ def update(
         cred = config.require_credential()
         current = await _read_article(cred, cvid)   # 作者侧，审核期也能读
         new_html = _read_body(file, content) if (file or content) else (current.get("content") or "")
+        if ai is not None:
+            new_html = _apply_ai_notice(new_html, ai)
         if not new_html.strip():
             raise BiliError("invalid_argument", "正文不能为空。")
         new_title = title or current.get("title") or ""

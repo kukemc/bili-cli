@@ -46,6 +46,7 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 发投票动态 / 看结果 | `bili dynamic post "下期做什么？" --vote "下期" --option A --option B`；`bili dynamic vote <vote_id>` |
 | 合集 | `bili season list / create / add <合集ID> <BV…> / remove / delete` |
 | 写专栏（长文） | `bili article image a.png` 先传图拿 URL → `bili article draft --title … --file body.html --category 34 --cover <图URL>` → `bili article publish <cvid>`（进审核，公开链接会短暂 404）；改已发布的用 `bili article update <cvid> --file …`（原地改，cvid 不变，但会重新审核）；`bili article show <cvid> [--text]` 读回来 |
+| 专栏的 AI 声明 | 专栏编辑器**没有** AI 创作声明字段（投稿有）。`bili article draft --ai` 会在正文末尾追加一句「本内容由 AI 参与创作。」，`--no-ai` 或重跑会自动替换/移除，不会重复堆叠。这是权宜之计，编辑器真出官方字段后会换掉，调用方式不变 |
 | 专栏正文的坑 | 编辑器只保留 `p span br h1 figure img figcaption a`；**`<pre>` / `<code>` 会被降级，代码块的换行和空格全丢**——代码请渲染成图片再放 `<img>`。分类字段是 `category`（二级分类 ID），写 `category_id` 会被当成 `template_id` 悄悄吃掉 |
 | 私信自动回复（B 站自带，需 1000 粉） | `bili dm autoreply show`；改之前必须先给用户看 `--dry-run` 并得到同意 |
 | 投稿 | `bili upload video a.mp4 --title … --tag …`（默认带“含AI生成内容”声明；`--topic` 话题 / 活动、`--schedule` 定时 + `--reserve` 预约、`--season` 进合集、`--staff "策划:UID"` 联合投稿） |

@@ -218,7 +218,7 @@ def test_update_keeps_existing_cover_when_not_given(fake_api, tmp_path):
     }
     body = tmp_path / "n.html"
     body.write_text("<p>新</p>", encoding="utf-8")
-    run_cmd(article.update, cvid=7, file=body, content=None, title=None, cover=None)
+    run_cmd(article.update, cvid=7, file=body, content=None, title=None, cover=None, ai=None)
     sent = [c for c in fake_api.calls if "article/update" in c[1]][0][2]
     assert sent["banner_url"] == "https://c/keep.jpg"
     assert sent["content"] == "<p>新</p>"
@@ -274,3 +274,50 @@ def test_get_uses_update_params(fake_credential):
     api = article._api("draft/view", "GET", fake_credential).update_params(aid=7)
     assert api.params == {"aid": 7}
     assert api.data == {}
+
+# ── AI 创作声明 ──────────────────────────────────────────────────────────────
+
+
+def test_ai_notice_appended_when_enabled():
+    out = article._apply_ai_notice("<p>正文</p>", True)
+    assert out.endswith("<p>" + article.AI_NOTICE + "</p>")
+    assert "<p>正文</p>" in out
+
+
+def test_ai_notice_removed_when_disabled():
+    once = article._apply_ai_notice("<p>正文</p>", True)
+    assert article._apply_ai_notice(once, False) == "<p>正文</p>"
+
+
+def test_ai_notice_is_idempotent():
+    """重复开不会堆出两份。"""
+    once = article._apply_ai_notice("<p>正文</p>", True)
+    twice = article._apply_ai_notice(once, True)
+    assert once == twice
+    assert twice.count(article.AI_NOTICE) == 1
+
+
+def test_ai_notice_replaces_stale_tail():
+    """正文被重写后再开，旧声明要跟着走，而不是叠在中间。"""
+    old = "<p>旧正文</p>\n<p>" + article.AI_NOTICE + "</p>"
+    new = article._apply_ai_notice("<p>新正文</p>" + old[len("<p>旧正文</p>"):], True)
+    assert new.count(article.AI_NOTICE) == 1
+    assert new.rstrip().endswith("</p>")
+
+
+def test_draft_sends_notice_when_ai_flag_set(fake_api, tmp_path):
+    fake_api.result_for = {"draft/addupdate": {"aid": 555}}
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, ai=True, cvid=None)
+    sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
+    assert article.AI_NOTICE in sent["content"]
+
+
+def test_draft_omits_notice_by_default(fake_api, tmp_path):
+    fake_api.result_for = {"draft/addupdate": {"aid": 556}}
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, ai=False, cvid=None)
+    sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
+    assert article.AI_NOTICE not in sent["content"]
