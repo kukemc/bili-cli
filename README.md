@@ -210,7 +210,7 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili dm autoreply show / set / on / off / keyword add / keyword delete` | B 站自带的私信自动回复（1000 粉以上） |
 | `bili owner set / show / clear` | 设置“主人” |
 | `bili dynamic post / list / show / delete / vote` | 动态：图文（最多 9 张）、`--at` @ 人、`--vote` 投票及结果 |
-| `bili article draft / publish / update / delete / show / image / categories` | 专栏：建草稿、发布、原地改、删除、读正文；`image` 传正文配图拿 URL，`categories` 查分类 ID（发布必填）。`--ai` 会在正文末尾追加 AI 创作声明（专栏暂无官方字段）。正文只保留 `p br h1 figure img figcaption span a`——**代码块请渲染成图片**，`<pre>`/`<code>` 会被降级 |
+| `bili article draft / publish / update / delete / show / watch / image / categories` | 专栏：建草稿、发布、原地改、删除、读正文；`image` 传正文配图拿 URL，`categories` 查分类 ID（发布必填）。`--ai` 会在正文末尾追加 AI 创作声明（专栏暂无官方字段）；`watch` 轮询作者侧状态等过审（-2 审核中 / 0 已发布 / 2 未通过，未通过时带 `reason`）。正文只保留 `p br h1 figure img figcaption span a`——**代码块请渲染成图片**，`<pre>`/`<code>` 会被降级 |
 | `bili season list / create / add / remove / delete` | 合集管理 |
 | `bili danmaku send / recall` | 发 / 撤回弹幕 |
 | `bili danmaku interact vote / rating / reserve / link / follow / list / remove` | 互动弹幕（仅自己的视频） |

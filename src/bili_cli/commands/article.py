@@ -22,6 +22,7 @@ web editor makes. Notes that cost us a few rounds of debugging:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import mimetypes
 import re
@@ -451,5 +452,62 @@ def show(
             "published": iso_time(d.get("publish_time")),
             "url": f"https://www.bilibili.com/read/cv{cvid}",
         }
+
+    run(body)
+
+# ── watch ────────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def watch(
+    cvid: int = typer.Argument(..., help="要盯的专栏 cvid。"),
+    interval: int = typer.Option(30, "--interval", help="轮询间隔（秒）。"),
+    timeout: int = typer.Option(600, "--timeout", help="最长等待（秒），0 表示一直等。"),
+) -> None:
+    """等一篇专栏过审：轮询作者侧状态，通过/驳回/超时再返回。
+
+    状态来自 `x/article/creative/article/view` 的 `state`：-2 审核中、0 已发布、2 未通过。
+    这比等私信可靠——B 站不会把过审结果发给作者本人，但状态字段一直可读。
+    """
+
+    async def body():
+        cred = config.require_credential()
+        import time as _t
+
+        started = _t.monotonic()
+        polls = 0
+        seen: list[str] = []
+        while True:
+            d = await _read_article(cred, cvid)
+            state = d.get("state")
+            polls += 1
+            label = STATES.get(state, str(state))
+            if not seen or seen[-1] != label:
+                seen.append(label)
+                output.info(f"[{polls}] state={state} ({label})") if hasattr(output, "info") else None
+            if state != -2:
+                out = {
+                    "cvid": cvid,
+                    "state": label,
+                    "polls": polls,
+                    "waited": round(_t.monotonic() - started),
+                    "title": d.get("title"),
+                    "url": f"https://www.bilibili.com/read/cv{cvid}",
+                }
+                if state == 2:
+                    out["rejected"] = True
+                    out["reason"] = d.get("reason") or "(接口没给原因)"
+                    out["hint"] = "改完再 `bili article update` 会重新进审核。"
+                else:
+                    out["hint"] = "已过审，公开链接现在可以访问了。"
+                return out
+            if timeout and (_t.monotonic() - started) >= timeout:
+                raise BiliError(
+                    "api_error",
+                    f"等了 {timeout} 秒还在审核中（state=-2）。",
+                    hint=f"稍后再跑 `bili article watch {cvid}`，或用 `bili article show {cvid}` 看一次。",
+                    detail={"cvid": cvid, "polls": polls},
+                )
+            await asyncio.sleep(interval)
 
     run(body)

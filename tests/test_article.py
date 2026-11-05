@@ -321,3 +321,29 @@ def test_draft_omits_notice_by_default(fake_api, tmp_path):
     run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, ai=False, cvid=None)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert article.AI_NOTICE not in sent["content"]
+
+# ── watch ───────────────────────────────────────────────────────────────────
+
+
+def test_watch_returns_immediately_when_published(fake_api):
+    fake_api.result_for = {"article/view": {"state": 0, "title": "T"}}
+    out = run_cmd(article.watch, cvid=1, interval=1, timeout=10)
+    assert out["state"] == "已发布"
+    assert out["polls"] == 1
+    assert "rejected" not in out
+
+
+def test_watch_reports_rejection_with_reason(fake_api):
+    fake_api.result_for = {"article/view": {"state": 2, "title": "T", "reason": "标题不合规"}}
+    out = run_cmd(article.watch, cvid=1, interval=1, timeout=10)
+    assert out["state"] == "未通过"
+    assert out["rejected"] is True
+    assert out["reason"] == "标题不合规"
+
+
+def test_watch_times_out_while_still_in_review(fake_api):
+    """一直 -2 就该超时报错，而不是无限转下去。"""
+    fake_api.result_for = {"article/view": {"state": -2, "title": "T"}}
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.watch, cvid=1, interval=0.01, timeout=0.2)
+    assert "审核中" in str(ei.value)
