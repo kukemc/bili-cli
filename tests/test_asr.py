@@ -136,3 +136,35 @@ def test_build_selects_engine_and_explains_missing():
 def test_masked_hides_secrets():
     m = settings.masked({"cloud": {"api_key": "sk-1234567890", "secret_key": "abcdefgh", "model": "m"}})
     assert m["cloud"] == {"api_key": "***7890", "secret_key": "***efgh", "model": "m"}
+
+
+def test_cache_path_tolerates_slashes_in_engine_id(tmp_path, monkeypatch):
+    """Cloud model ids are namespaced ("Qwen/Qwen3-ASR-1.7B"); the cache path must stay flat.
+
+    Regression: the id was interpolated straight into the filename, so the path
+    silently gained a directory component and the first transcribe of every video
+    died with FileNotFoundError.
+    """
+    from bili_cli.asr import pipeline
+
+    path = pipeline._cache_path("BV1xax363E5y_p1", "cloud-openai-Qwen/Qwen3-ASR-1.7B")
+
+    assert path.parent == tmp_path / "transcripts"
+    assert "/" not in path.name
+    assert path.name.endswith(".json")
+
+    # The same engine must map to a stable name, and the file must be writable
+    # without any pre-created subdirectory.
+    again = pipeline._cache_path("BV1xax363E5y_p1", "cloud-openai-Qwen/Qwen3-ASR-1.7B")
+    assert again == path
+    path.write_text("{}", encoding="utf-8")
+    assert path.exists()
+
+
+def test_safe_name_handles_other_separators_and_spaces():
+    from bili_cli.asr.pipeline import _safe_name
+
+    assert _safe_name("Qwen/Qwen3-ASR-1.7B") == "Qwen_Qwen3-ASR-1.7B"
+    assert _safe_name("openai/whisper-large-v3") == "openai_whisper-large-v3"
+    assert "\\" not in _safe_name("a\\b")
+    assert " " not in _safe_name("has space")

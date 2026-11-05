@@ -13,10 +13,22 @@ from .audio import fetch_wav
 from .segment import silence_segments, vad_segments
 
 
+def _safe_name(raw: str) -> str:
+    """Make an engine id safe to use as a single path component.
+
+    Cloud engine ids embed the model name verbatim, and providers namespace
+    models with slashes ("Qwen/Qwen3-ASR-1.7B", "openai/whisper-large-v3").
+    Interpolating that straight into a filename makes the path look like it has
+    extra directories, so the first transcribe for every video fails with
+    FileNotFoundError when the parent component does not exist.
+    """
+    return "".join("_" if c in '/\\:*?"<>|' or c.isspace() else c for c in raw)
+
+
 def _cache_path(key: str, engine_id: str) -> Path:
     d = config.home() / "transcripts"
     d.mkdir(parents=True, exist_ok=True)
-    return d / f"{key}__{engine_id}.json"
+    return d / f"{key}__{_safe_name(engine_id)}.json"
 
 
 async def transcribe(playurl_fn, key: str, engine: engines.Engine, context: str = "", use_cache: bool = True) -> dict[str, Any]:
