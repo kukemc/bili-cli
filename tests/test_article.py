@@ -33,15 +33,20 @@ class FakeApi:
         self.url = url
         self.method = method
         self.params: dict = {}
+        self.data: dict = {}
         self.extra: dict = {}
 
     def update_params(self, **kwargs):
-        self.params.update(kwargs)
+        self.params = kwargs
+        return self
+
+    def update_data(self, **kwargs):
+        self.data = kwargs
         return self
 
     @property
     async def result(self):
-        FakeApi.calls.append((self.method, self.url, {**self.params, **self.extra}))
+        FakeApi.calls.append((self.method, self.url, {**self.params, **self.data, **self.extra}))
         for frag, value in FakeApi.result_for.items():
             if frag in self.url:
                 if isinstance(value, Exception):
@@ -175,14 +180,14 @@ def test_publish_sends_category_field_not_category_id(fake_api):
     assert out["state"] == "审核中"
 
 
-def test_publish_without_category_omits_field(fake_api):
+def test_publish_without_category_fails_early(fake_api):
+    """没有分类时 submit 必然 20022，所以 publish 应该在发请求前就报错。"""
     fake_api.result_for = {
         "draft/view": {"title": "T", "content": "<p>x</p>", "category": {"id": 0}},
-        "article/submit": {"state": -2},
     }
-    run_cmd(article.publish, cvid=1, category=None)
-    sub = [c for c in fake_api.calls if "article/submit" in c[1]][0][2]
-    assert "category" not in sub
+    with pytest.raises(BiliError):
+        run_cmd(article.publish, cvid=1, category=None)
+    assert not any("article/submit" in c[1] for c in fake_api.calls)
 
 
 def test_publish_reads_body_from_draft_not_from_aid_only(fake_api):
@@ -221,7 +226,7 @@ def test_update_keeps_existing_cover_when_not_given(fake_api, tmp_path):
 
 
 def test_delete_calls_delete_endpoint(fake_api):
-    fake_api.result_for = {"article/delete": {}}
+    fake_api.result_for = {"article/view": {"title": "要删的"}, "article/delete": {}}
     out = run_cmd(article.delete, cvid=42)
     assert out["deleted"] is True
     assert any("article/delete" in c[1] for c in fake_api.calls)
@@ -239,4 +244,33 @@ def test_show_reports_images_and_tags(fake_api):
     out = run_cmd(article.show, cvid=3, text=False)
     assert out["images"] == 2
     assert out["category"] == 34
-    assert "img" in out["tags"] and "h1" in out["tags"]
+    assert out["dropped_tags"] == []   # h1/p/img 都在白名单里
+
+# ── 真实 Api 构造（不 mock）───────────────────────────────────────────────────
+
+
+def test_api_carries_credential_and_verify(fake_credential):
+    """回归点：早先 `_api()` 没带 credential，真实账号上直接抛
+    CredentialNoSessdataException。这条不 mock Api，直接检查真实构造出来的对象。"""
+    from bilibili_api.utils.network import Api
+
+    api = article._api("draft/addupdate", "POST", fake_credential)
+    assert isinstance(api, Api)
+    assert api.credential is fake_credential
+    assert api.verify is True
+    assert "draft/addupdate" in api.url
+
+
+def test_post_uses_update_data_and_keeps_csrf(fake_credential):
+    """回归点：update_params 是整体替换（self.params = kwargs），二次调用会把 csrf 冲掉。
+    POST 必须走 update_data，csrf 由库在 prepare 阶段追加。"""
+    api = article._api("article/submit", "POST", fake_credential).update_data(aid=1, title="t")
+    assert api.data == {"aid": 1, "title": "t"}
+    assert api.params == {}          # csrf 不在这里，也不会被覆盖
+    assert api.no_csrf is False      # 库会自动追加 csrf
+
+
+def test_get_uses_update_params(fake_credential):
+    api = article._api("draft/view", "GET", fake_credential).update_params(aid=7)
+    assert api.params == {"aid": 7}
+    assert api.data == {}

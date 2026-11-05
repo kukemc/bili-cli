@@ -6,18 +6,26 @@ web editor makes. Notes that cost us a few rounds of debugging:
 * The category field is **`category`**, not `category_id` — the latter is silently stored as
   `template_id`, and the article then shows up with no category.
 * `submit` validates field by field and rejects a bare `aid`: `title`, `content`, `category`,
-  `reprint` must all be present, or you get 20022 / 20023 / 20027 / 20028 in that order.
+  `reprint` must all be present, or you get 20022 / 20023 / 20027 / 20028 in that order. With no
+  category it always fails with 20022, so `publish` refuses early instead of letting B站 report it.
 * Uploading an image wants a **`data:` URI**, not raw base64 (`-400` 请求错误 otherwise).
 * Editing a published article goes through `article/update`; `submit` would create a new one.
-  `update` re-enters review, so the article is briefly `in_audit` and the public view API answers 404.
+  `update` re-enters review, so the article is briefly `in_audit`: the **public** `x/article/view`
+  answers 404 while that lasts, but the **author-side** `x/article/creative/article/view` keeps
+  working — which is why every read here goes through the author-side endpoints.
+* `x/article/creative/draft/view` only serves drafts; on a published article it answers
+  `47030 该草稿已失效`, so the two reads are not interchangeable.
+* `<pre>` / `<code>` are not in the editor's tag whitelist and get demoted to plain text, which
+  destroys a code block's line breaks *and* its alignment (runs of spaces collapse). Render code as
+  an image instead — see `ALLOWED_TAGS`.
 """
 
 from __future__ import annotations
 
-import re
-
 import base64
 import mimetypes
+import re
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,60 +39,100 @@ from ..runtime import iso_time, run
 app = typer.Typer(help="专栏：建草稿、传图、发布、编辑、删除、读取正文。", no_args_is_help=True)
 
 BASE = "https://api.bilibili.com/x/article/creative"
-VIEW = "https://api.bilibili.com/x/article/view"
+CATEGORIES = "https://api.bilibili.com/x/article/categories"
+ARTICLE_ID_RE = re.compile(r"/read/(?:preview/)?cv?(\d+)|/(\d{6,})$")
 
 # 内容状态。审核期间公开接口返回 -404，但作者侧仍能读。
 STATES = {-2: "审核中", 0: "已发布", 1: "待审核", 2: "未通过"}
 
-# 专栏编辑器的标签白名单（实测）。不在名单里的标签（例如 <pre> / <code>）会被降级成普通文本，
-# 代码块的换行与对齐都会丢失——代码请用 `bili article image` 传图后在正文里引用 URL。
+# 专栏编辑器的标签白名单（实测）。不在名单里的标签会被降级成普通文本，
+# 代码块的换行与对齐都会丢失——代码请渲染成图片。
 ALLOWED_TAGS = ("p", "span", "br", "h1", "figure", "img", "figcaption", "a")
 
+TAG_RE = re.compile(r"<\s*([a-z0-9]+)", re.I)
+BR_RE = re.compile(r"<br\s*/?>", re.I)
+P_RE = re.compile(r"</p>", re.I)
+ANY_TAG_RE = re.compile(r"<[^>]+>")
 
-def _api(path: str, method: str = "POST") -> Api:
-    return Api(url=f"{BASE}/{path}", method=method, verify=True, no_csrf=True)
+
+# ── HTTP ─────────────────────────────────────────────────────────────────────
 
 
-async def _call(path: str, cred, *, method: str = "POST", params: dict[str, Any] | None = None) -> Any:
-    """One creative-center call, csrf attached. `t` is not passed so the response is JSON."""
-    api = _api(path, method).update_params(csrf=cred.bili_jct, t=0)
-    if params:
-        api = api.update_params(**params)
-    return await api.result
+def _api(path: str, method: str, cred) -> Api:
+    """One creative-center call.
+
+    `verify=True` requires the credential, and the library appends `csrf` to `data` by itself for
+    non-GET calls (unless `no_csrf` is set). POST bodies therefore go through `update_data`, never
+    `update_params` — the latter replaces the whole params dict and would drop csrf.
+    """
+    return Api(url=f"{BASE}/{path}", method=method, verify=True, credential=cred)
+
+
+async def _get(path: str, cred, **params: Any) -> Any:
+    return await _api(path, "GET", cred).update_params(**params).result
+
+
+async def _post(path: str, cred, **data: Any) -> Any:
+    return await _api(path, "POST", cred).update_data(**data).result
+
+
+async def _post_article(path: str, cred, **data: Any) -> Any:
+    """保存类调用，把 B 站的限流码翻成人话。"""
+    try:
+        return await _post(path, cred, **data)
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        if code == 20019:
+            raise BiliError(
+                "api_error",
+                "刚发布/刚改过的文章有冷却，短时间不能再用相同标题提交。",
+                hint="等几分钟再 `bili article update`；只改正文时标题不变也会触发。",
+                detail={"bili_code": 20019},
+            ) from exc
+        if code == 37409:
+            raise BiliError(
+                "api_error",
+                "这篇专栏正在审核，暂时不能编辑。",
+                hint="等审核结束（`bili article show <cvid>` 能读到最新状态）后再试。",
+                detail={"bili_code": 37409},
+            ) from exc
+        raise
+
+
+async def _read_article(cred, cvid: int) -> dict[str, Any]:
+    """作者侧读取，审核期也能用（公开的 x/article/view 此时是 404）。"""
+    return await _get("article/view", cred, aid=cvid) or {}
 
 
 async def _read_draft(cred, cvid: int) -> dict[str, Any]:
-    api = Api(url=f"{BASE}/draft/view", method="GET", verify=True, credential=cred).update_params(aid=cvid)
-    return await api.result
+    try:
+        return await _get("draft/view", cred, aid=cvid) or {}
+    except Exception as exc:
+        raise BiliError(
+            "not_found",
+            f"读不到草稿 {cvid}。",
+            hint="只对未发布的草稿有效；已发布的请用 `bili article show`。",
+        ) from exc
 
 
-def _summary(cvid: int, d: dict[str, Any]) -> dict[str, Any]:
-    html = d.get("content") or ""
-    return {
-        "cvid": cvid,
-        "title": d.get("title"),
-        "category": (d.get("category") or {}).get("id") or None,
-        "cover": d.get("banner_url") or None,
-        "chars": len(_plain(html)),
-        "images": html.count("<img"),
-        "editable": bool(d.get("editable", True)),
-        "url": f"https://www.bilibili.com/read/cv{cvid}",
-    }
+# ── helpers ──────────────────────────────────────────────────────────────────
 
 
 def _plain(html: str) -> str:
-    """Rough text length; the website counts differently, this is only for a size hint."""
-    import re
+    """Rough text length; the website counts differently, this is only a size hint."""
+    return re.sub(r"\s+", "", ANY_TAG_RE.sub("", html))
 
-    return re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", html))
+
+def _plain_keep_lines(html: str) -> str:
+    s = BR_RE.sub("\n", html)
+    s = P_RE.sub("\n", s)
+    s = ANY_TAG_RE.sub("", s)
+    return re.sub(r"\n{3,}", "\n\n", s).strip()
 
 
 def _check_tags(html: str) -> list[str]:
-    """Return tags used in the body that the editor will not keep as-is."""
-    import re
-
-    used = {m.group(1).lower() for m in re.finditer(r"<\s*([a-z0-9]+)", html, re.I)}
-    return sorted(used - set(ALLOWED_TAGS))
+    """Tags the editor will not keep as-is."""
+    return sorted({m.group(1).lower() for m in TAG_RE.finditer(html)} - set(ALLOWED_TAGS))
 
 
 def _read_body(file: Optional[Path], text: Optional[str]) -> str:
@@ -92,8 +140,6 @@ def _read_body(file: Optional[Path], text: Optional[str]) -> str:
         raise BiliError("invalid_argument", "正文只能给一个：`--file` 或 `--content`。")
     if file:
         if str(file) == "-":
-            import sys
-
             return sys.stdin.read()
         if not file.is_file():
             raise BiliError("invalid_argument", f"正文文件不存在：{file}")
@@ -106,6 +152,35 @@ def _data_uri(path: Path) -> str:
     if not mime.startswith("image/"):
         raise BiliError("invalid_argument", f"不是图片：{path}")
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+
+# ── categories ───────────────────────────────────────────────────────────────
+
+
+@app.command()
+def categories(
+    parent: Optional[int] = typer.Option(None, "--parent", help="只看某个一级分类的子分类。"),
+) -> None:
+    """列出专栏分类 ID（发布时必须给一个，否则 20022）。"""
+
+    async def body():
+        data = await Api(url=CATEGORIES, method="GET").result
+        rows = []
+        for top in data or []:
+            if parent is not None and top.get("id") != parent:
+                continue
+            rows.append({
+                "id": top.get("id"),
+                "name": top.get("name"),
+                "children": [{"id": c.get("id"), "name": c.get("name")} for c in (top.get("children") or [])],
+            })
+        return {
+            "count": len(rows),
+            "categories": rows,
+            "hint": "发草稿时用二级分类：`bili article draft --category 34`",
+        }
+
+    run(body)
 
 
 # ── image ────────────────────────────────────────────────────────────────────
@@ -122,15 +197,15 @@ def image(
             raise BiliError("invalid_argument", f"图片不存在：{path}")
         params = {"file": str(path), "size": path.stat().st_size}
         if output.settings.dry_run:
-            return {"dry_run": True, "action": "article.image", "params": params}
+            return {"dry_run": True, "action": "article_image", "params": params}
         cred = config.require_credential()
-        guard.check("article")
-        data = await _call("article/upcover", cred, params={"cover": _data_uri(path)})
-        url = str(data.get("url") or data.get("image_url") or "")
+        guard.check("article_image")   # 单独限流：一篇文章可能要传很多图
+        data = await _post("article/upcover", cred, cover=_data_uri(path))
+        url = str((data or {}).get("url") or (data or {}).get("image_url") or "")
         if not url:
             raise BiliError("api_error", "上传成功但没有拿到图片地址。", detail=data)
         url = url.replace("http://", "https://")
-        guard.record("article", params, {"url": url})
+        guard.record("article_image", params, {"url": url})
         return {"url": url, "next": f"正文里写 `<img src=\"{url}\">`，或先 `bili article draft` 再放进去。"}
 
     run(body)
@@ -144,8 +219,9 @@ def draft(
     title: str = typer.Option(..., "--title", "-t", help="标题，40 字以内。"),
     file: Optional[Path] = typer.Option(None, "--file", "-f", help="正文 HTML 文件；`-` 表示 stdin。"),
     content: Optional[str] = typer.Option(None, "--content", help="正文 HTML 文本（与 --file 二选一）。"),
-    category: Optional[int] = typer.Option(None, "--category", help="分类 ID（二级分类）；不填则未分类。"),
+    category: Optional[int] = typer.Option(None, "--category", help="二级分类 ID；用 `bili article categories` 查。"),
     cover: Optional[str] = typer.Option(None, "--cover", help="封面图 URL（用 `bili article image` 得到）。"),
+    original: bool = typer.Option(True, "--original/--reprint", help="原创还是转载。"),
     cvid: Optional[int] = typer.Option(None, "--cvid", help="给了就更新这个草稿，否则新建。"),
 ) -> None:
     """新建一个草稿（或更新已有草稿）。发布用 `bili article publish`。"""
@@ -157,12 +233,15 @@ def draft(
         if not html.strip():
             raise BiliError("invalid_argument", "正文不能为空。")
         dropped = _check_tags(html)
-        params: dict[str, Any] = {"cvid": cvid, "title": title, "category": category, "cover": bool(cover), "chars": len(_plain(html))}
+        params: dict[str, Any] = {
+            "cvid": cvid, "title": title, "category": category, "cover": bool(cover),
+            "original": original, "chars": len(_plain(html)),
+        }
         if output.settings.dry_run:
             return {"dry_run": True, "action": "article.draft", "params": params, "dropped_tags": dropped}
         cred = config.require_credential()
         guard.check("article")
-        payload: dict[str, Any] = {"title": title, "content": html}
+        payload: dict[str, Any] = {"title": title, "content": html, "original": 1 if original else 0}
         if cvid:
             payload["aid"] = cvid
         if category is not None:
@@ -170,14 +249,16 @@ def draft(
             payload["category"] = category
         if cover:
             payload["banner_url"] = cover
-        data = await _call("draft/addupdate", cred, params=payload)
-        aid = int(data.get("aid") or cvid or 0)
+        data = await _post("draft/addupdate", cred, **payload)
+        aid = int((data or {}).get("aid") or cvid or 0)
         guard.record("article", params, {"cvid": aid})
         out: dict[str, Any] = {
             "cvid": aid,
             "title": title,
             "next": f"发布：`bili article publish {aid}`",
         }
+        if category is None:
+            out["warning"] = "没有分类，publish 会报 20022。用 `bili article categories` 查一个再补。"
         if dropped:
             out["dropped_tags"] = dropped
             out["note"] = "这些标签专栏编辑器不会保留，会被降级成普通文本。代码块请改用图片。"
@@ -192,7 +273,7 @@ def draft(
 @app.command()
 def publish(
     cvid: int = typer.Argument(..., help="草稿的 cvid。"),
-    category: Optional[int] = typer.Option(None, "--category", help="分类 ID；不给就用草稿里已有的。"),
+    category: Optional[int] = typer.Option(None, "--category", help="分类 ID；草稿里没存就必须给。"),
 ) -> None:
     """把草稿提交发布（会进审核）。"""
 
@@ -203,30 +284,42 @@ def publish(
         if not html.strip():
             raise BiliError("not_found", f"草稿 {cvid} 没有正文，或它不属于你。")
         cat = category if category is not None else ((d.get("category") or {}).get("id") or None)
+        if not cat:
+            # 没有分类时 submit 必然 20022，提前拦住比让 B 站报错更有用。
+            raise BiliError(
+                "invalid_argument",
+                "这篇草稿没有分类，发布必然报 20022。",
+                hint="用 `bili article categories` 查一个，然后 `bili article publish <cvid> --category 34`。",
+            )
         params = {"cvid": cvid, "title": d.get("title"), "category": cat}
         if output.settings.dry_run:
             return {"dry_run": True, "action": "article.publish", "params": params}
-        # submit 逐字段校验，缺一个就报一个错码，所以这里把必需的都带上。
         payload: dict[str, Any] = {
             "aid": cvid,
             "title": d.get("title") or "",
             "content": html,
+            "category": cat,
             "reprint": 0,
-            "original": 1,
+            "original": 1 if d.get("original", True) else 0,
         }
-        if cat:
-            payload["category"] = cat
         if d.get("banner_url"):
             payload["banner_url"] = d["banner_url"]
         guard.check("article")
-        data = await _call("article/submit", cred, params=payload)
-        guard.record("article", params, {"cvid": cvid, "state": data.get("state")})
-        return {
-            "cvid": cvid,
-            "state": STATES.get(data.get("state"), data.get("state")),
-            "preview": data.get("view_url"),
-            "next": "审核期间公开链接会返回 404，属正常；过审后用 `bili article show` 确认。",
+        data = await _post("article/submit", cred, **payload)
+        guard.record("article", params, {"cvid": cvid, "state": (data or {}).get("state")})
+        # 发布后文章会拿到一个新的 cvid（草稿 ID 不是它），真值藏在预览链接里。
+        view_url = str((data or {}).get("view_url") or "")
+        real = ARTICLE_ID_RE.search(view_url)
+        out: dict[str, Any] = {
+            "draft_id": cvid,
+            "cvid": int(real.group(1)) if real else None,
+            "state": STATES.get((data or {}).get("state"), (data or {}).get("state")),
+            "preview": view_url or None,
+            "next": "发布后 cvid 会变（草稿 ID 不是文章 ID）。审核期间公开链接返回 404，属正常。",
         }
+        if not real:
+            out["warning"] = "没能从预览链接里解析出文章 cvid，请到创作中心确认。"
+        return out
 
     run(body)
 
@@ -246,7 +339,7 @@ def update(
 
     async def body():
         cred = config.require_credential()
-        current = await _view(cvid)
+        current = await _read_article(cred, cvid)   # 作者侧，审核期也能读
         new_html = _read_body(file, content) if (file or content) else (current.get("content") or "")
         if not new_html.strip():
             raise BiliError("invalid_argument", "正文不能为空。")
@@ -254,28 +347,33 @@ def update(
         if len(new_title) > 40:
             raise BiliError("invalid_argument", "标题不能超过 40 字。")
         cat = (current.get("category") or {}).get("id") or None
+        dropped = _check_tags(new_html)
         params = {"cvid": cvid, "title": new_title, "category": cat, "chars": len(_plain(new_html))}
         if output.settings.dry_run:
-            return {"dry_run": True, "action": "article.update", "params": params, "dropped_tags": _check_tags(new_html)}
+            return {"dry_run": True, "action": "article.update", "params": params, "dropped_tags": dropped}
         payload: dict[str, Any] = {
             "aid": cvid,
             "title": new_title,
             "content": new_html,
             "reprint": 0,
-            "original": 1,
+            "original": 1 if current.get("original", True) else 0,
         }
         if cat:
             payload["category"] = cat
         if cover or current.get("banner_url"):
             payload["banner_url"] = cover or current["banner_url"]
         guard.check("article")
-        data = await _call("article/update", cred, params=payload)
+        data = await _post_article("article/update", cred, **payload)
         guard.record("article", params, {"cvid": cvid})
-        return {
+        out: dict[str, Any] = {
             "cvid": cvid,
-            "state": STATES.get(data.get("state"), data.get("state")),
-            "next": "编辑会重新进审核；审核期间 `bili article show` 可能读不到，等一会儿再试。",
+            "state": STATES.get((data or {}).get("state"), (data or {}).get("state")),
+            "next": "编辑会重新进审核；审核期间 `bili article show` 仍可读（走作者侧接口）。",
         }
+        if dropped:
+            out["dropped_tags"] = dropped
+            out["note"] = "这些标签已被降级成普通文本，代码块请改用图片。"
+        return out
 
     run(body)
 
@@ -290,31 +388,26 @@ def delete(
     """删除一篇自己的专栏。不可撤销。"""
 
     async def body():
-        params = {"cvid": cvid}
+        cred = config.require_credential()
+        # 先确认是自己的：读一次作者侧接口，读不到就没有权限删。
+        try:
+            found = await _read_article(cred, cvid)
+        except Exception:
+            found = None
+        if not found:
+            raise BiliError("not_found", f"你的账号里找不到专栏 {cvid}，不删。")
+        params = {"cvid": cvid, "title": found.get("title")}
         if output.settings.dry_run:
             return {"dry_run": True, "action": "article.delete", "params": params}
-        cred = config.require_credential()
         guard.check("article")
-        await _call("article/delete", cred, params={"aid": cvid})
+        await _post("article/delete", cred, aid=cvid)
         guard.record("article", params, "ok")
-        return {"cvid": cvid, "deleted": True}
+        return {"cvid": cvid, "deleted": True, "title": found.get("title")}
 
     run(body)
 
 
 # ── show ─────────────────────────────────────────────────────────────────────
-
-
-async def _view(cvid: int) -> dict[str, Any]:
-    api = Api(url=VIEW, method="GET").update_params(id=cvid)
-    try:
-        return await api.result
-    except Exception as exc:  # -404 在审核期间是常态
-        raise BiliError(
-            "not_found",
-            f"读不到专栏 {cvid}。",
-            hint="刚发布或刚编辑的文章在审核期间会返回 404；稍后再试。",
-        ) from exc
 
 
 @app.command()
@@ -325,7 +418,8 @@ def show(
     """读一篇专栏：标题、字数、图片数、封面；`--text` 给出正文。"""
 
     async def body():
-        d = await _view(cvid)
+        cred = config.require_credential()
+        d = await _read_article(cred, cvid)
         html = d.get("content") or ""
         if text:
             return {"cvid": cvid, "title": d.get("title"), "text": _plain_keep_lines(html)}
@@ -336,18 +430,9 @@ def show(
             "cover": d.get("banner_url") or None,
             "chars": len(_plain(html)),
             "images": html.count("<img"),
-            "tags": sorted({m.group(1).lower() for m in re.finditer(r"<\s*([a-z0-9]+)", html, re.I)}),
+            "dropped_tags": _check_tags(html),
             "published": iso_time(d.get("publish_time")),
             "url": f"https://www.bilibili.com/read/cv{cvid}",
         }
 
     run(body)
-
-
-def _plain_keep_lines(html: str) -> str:
-    import re
-
-    s = re.sub(r"<br\s*/?>", "\n", html, flags=re.I)
-    s = re.sub(r"</p>", "\n", s, flags=re.I)
-    s = re.sub(r"<[^>]+>", "", s)
-    return re.sub(r"\n{3,}", "\n\n", s).strip()
