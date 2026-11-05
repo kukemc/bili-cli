@@ -214,7 +214,6 @@ def _figure(url: str, caption: str) -> str:
 def image(
     path: Path = typer.Argument(..., help="本地图片路径（png / jpg）。"),
     caption: str = typer.Option("", "--caption", "-c", help="图注（显示在图下方）。"),
-    at: Optional[str] = typer.Option(None, "--at", help="想插在某段之后：给那段正文里独一无二的片段，工具会告诉你插在第几段。"),
 ) -> None:
     """上传一张正文配图，直接吐出可以粘进正文的 <figure> 片段。"""
 
@@ -232,18 +231,12 @@ def image(
             raise BiliError("api_error", "上传成功但没有拿到图片地址。", detail=data)
         url = url.replace("http://", "https://")
         guard.record("article_image", params, {"url": url})
-        out: dict[str, Any] = {
+        return {
             "url": url,
             "html": _figure(url, caption),
-            "usage": "把 html 整个粘到正文里想放图的位置——它前后要和别的块同级（都在最外层，别套进 <p> 里）。",
+            "usage": "把 html 粘到正文里想放图的位置，和别的块同级（别套进 <p> 里）。"
+                     "想按段落定位就用 `bili article embed --after`，那个会真的插进去。",
         }
-        if at:
-            # 只在给了 --file 上下文时才有意义；这里给出定位方法而不是猜位置。
-            out["anchor_hint"] = (
-                f"用 `--at '{at}'` 定位：在正文 HTML 里搜这段文字，"
-                "找到它所在的块（通常是一个 <p>…</p>），把 html 粘在那个块的结束标签之后。"
-            )
-        return out
 
     run(body)
 
@@ -508,7 +501,7 @@ def watch(
             label = STATES.get(state, str(state))
             if not seen or seen[-1] != label:
                 seen.append(label)
-                output.info(f"[{polls}] state={state} ({label})") if hasattr(output, "info") else None
+                output.info(f"[{polls}] state={state} ({label})")
             if state != -2:
                 out = {
                     "cvid": cvid,
@@ -587,7 +580,8 @@ def embed(
         pos = _find_block_end(html, after)   # 先定位，锚点有问题就别浪费一次上传
         params = {"file": str(file), "image": str(image), "after": after}
         if output.settings.dry_run:
-            return {"dry_run": True, "action": "article_image", "params": params, "insert_at": pos}
+            return {"dry_run": True, "action": "article.embed", "params": params,
+                    "insert_at": pos, "preview": html[:pos] + "\n<!-- 图插在这里 -->\n" + html[pos:]}
         cred = config.require_credential()
         guard.check("article_image")
         data = await _post("article/upcover", cred, cover=_data_uri(image))

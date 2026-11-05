@@ -205,7 +205,7 @@ def test_image_returns_url_and_uses_data_uri(fake_api, tmp_path):
     fake_api.result_for = {"upcover": {"url": "http://article.biliimg.com/x.png"}}
     p = tmp_path / "i.png"
     p.write_bytes(b"\x89PNG\r\n\x1a\n")
-    out = run_cmd(article.image, path=p, caption="", at=None)
+    out = run_cmd(article.image, path=p, caption="")
     assert out["url"].startswith("https://")
     sent = [c for c in fake_api.calls if "upcover" in c[1]][0][2]
     assert sent["cover"].startswith("data:image/png;base64,")
