@@ -205,7 +205,7 @@ def test_image_returns_url_and_uses_data_uri(fake_api, tmp_path):
     fake_api.result_for = {"upcover": {"url": "http://article.biliimg.com/x.png"}}
     p = tmp_path / "i.png"
     p.write_bytes(b"\x89PNG\r\n\x1a\n")
-    out = run_cmd(article.image, path=p)
+    out = run_cmd(article.image, path=p, caption="", at=None)
     assert out["url"].startswith("https://")
     sent = [c for c in fake_api.calls if "upcover" in c[1]][0][2]
     assert sent["cover"].startswith("data:image/png;base64,")
@@ -347,3 +347,56 @@ def test_watch_times_out_while_still_in_review(fake_api):
     with pytest.raises(BiliError) as ei:
         run_cmd(article.watch, cvid=1, interval=0.01, timeout=0.2)
     assert "审核中" in str(ei.value)
+
+# ── embed ───────────────────────────────────────────────────────────────────
+
+
+def test_find_block_end_after_paragraph():
+    html = "<p>第一段</p><p>目标段落</p><p>第三段</p>"
+    pos = article._find_block_end(html, "目标段落")
+    assert html[:pos] == "<p>第一段</p><p>目标段落</p>"
+
+
+def test_find_block_end_rejects_missing_anchor():
+    with pytest.raises(BiliError):
+        article._find_block_end("<p>没有那个词</p>", "目标段落")
+
+
+def test_find_block_end_rejects_ambiguous_anchor():
+    """锚点出现两次就必须报错，不能挑第一个。"""
+    with pytest.raises(BiliError) as ei:
+        article._find_block_end("<p>重复</p><p>重复</p>", "重复")
+    assert "不唯一" in str(ei.value)
+
+
+def test_figure_matches_editor_markup():
+    fig = article._figure("https://x/y.png", "说明")
+    assert fig.startswith('<figure class="img-box"')
+    assert '<img src="https://x/y.png">' in fig
+    assert '<figcaption class="caption"' in fig
+    assert "说明" in fig
+
+
+def test_embed_inserts_after_anchor(fake_api, tmp_path):
+    fake_api.result_for = {"upcover": {"url": "http://article.biliimg.com/z.png"}}
+    body = tmp_path / "b.html"
+    body.write_text("<p>一</p><p>二</p><p>三</p>", encoding="utf-8")
+    img = tmp_path / "i.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    out = tmp_path / "o.html"
+    res = run_cmd(article.embed, file=body, image=img, after="二", caption="图注", out=out)
+    merged = out.read_text(encoding="utf-8")
+    assert merged.index("z.png") < merged.index("三")
+    assert merged.index("二") < merged.index("z.png")
+    assert res["written"] == str(out)
+
+
+def test_embed_checks_anchor_before_uploading(fake_api, tmp_path):
+    """锚点不存在时不该浪费一次上传请求。"""
+    body = tmp_path / "b.html"
+    body.write_text("<p>一</p>", encoding="utf-8")
+    img = tmp_path / "i.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    with pytest.raises(BiliError):
+        run_cmd(article.embed, file=body, image=img, after="不存在", caption="", out=None)
+    assert fake_api.calls == []

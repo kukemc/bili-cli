@@ -199,16 +199,29 @@ def categories(
 # ── image ────────────────────────────────────────────────────────────────────
 
 
+def _figure(url: str, caption: str) -> str:
+    """专栏编辑器实际保存的图片结构。裸 <img> 能显示，但没有 figcaption 的样式和留白。"""
+    cap = caption.replace("<", "&lt;").replace(">", "&gt;")
+    return (
+        f'<figure class="img-box" contenteditable="false">'
+        f'<img src="{url}">'
+        f'<figcaption class="caption" contenteditable="">{cap}</figcaption>'
+        f"</figure>"
+    )
+
+
 @app.command()
 def image(
     path: Path = typer.Argument(..., help="本地图片路径（png / jpg）。"),
+    caption: str = typer.Option("", "--caption", "-c", help="图注（显示在图下方）。"),
+    at: Optional[str] = typer.Option(None, "--at", help="想插在某段之后：给那段正文里独一无二的片段，工具会告诉你插在第几段。"),
 ) -> None:
-    """上传一张正文配图，返回可直接写进 <img src> 的 URL。"""
+    """上传一张正文配图，直接吐出可以粘进正文的 <figure> 片段。"""
 
     async def body():
         if not path.is_file():
             raise BiliError("invalid_argument", f"图片不存在：{path}")
-        params = {"file": str(path), "size": path.stat().st_size}
+        params = {"file": str(path), "size": path.stat().st_size, "caption": caption}
         if output.settings.dry_run:
             return {"dry_run": True, "action": "article_image", "params": params}
         cred = config.require_credential()
@@ -219,7 +232,18 @@ def image(
             raise BiliError("api_error", "上传成功但没有拿到图片地址。", detail=data)
         url = url.replace("http://", "https://")
         guard.record("article_image", params, {"url": url})
-        return {"url": url, "next": f"正文里写 `<img src=\"{url}\">`，或先 `bili article draft` 再放进去。"}
+        out: dict[str, Any] = {
+            "url": url,
+            "html": _figure(url, caption),
+            "usage": "把 html 整个粘到正文里想放图的位置——它前后要和别的块同级（都在最外层，别套进 <p> 里）。",
+        }
+        if at:
+            # 只在给了 --file 上下文时才有意义；这里给出定位方法而不是猜位置。
+            out["anchor_hint"] = (
+                f"用 `--at '{at}'` 定位：在正文 HTML 里搜这段文字，"
+                "找到它所在的块（通常是一个 <p>…</p>），把 html 粘在那个块的结束标签之后。"
+            )
+        return out
 
     run(body)
 
@@ -509,5 +533,83 @@ def watch(
                     detail={"cvid": cvid, "polls": polls},
                 )
             await asyncio.sleep(interval)
+
+    run(body)
+
+# ── embed ────────────────────────────────────────────────────────────────────
+
+BLOCK_END_RE = re.compile(r"</(?:p|h1|figure)>", re.I)
+
+
+def _find_block_end(html: str, anchor: str) -> int:
+    """返回包含 anchor 的块在其结束标签之后的位置。找不到时抛错，不猜。"""
+    hits = [m.start() for m in re.finditer(re.escape(anchor), html)]
+    if not hits:
+        raise BiliError(
+            "invalid_argument",
+            f"正文里找不到锚点：{anchor}",
+            hint="锚点要能和正文原样对上（区分全半角）。先用 `bili article show <cvid> --text` 看一下实际文字。",
+        )
+    if len(hits) > 1:
+        raise BiliError(
+            "invalid_argument",
+            f"锚点不唯一（出现 {len(hits)} 次）：{anchor}",
+            hint="换一段更长、只出现一次的片段。",
+        )
+    after = hits[0] + len(anchor)
+    m = BLOCK_END_RE.search(html, after)
+    if not m:
+        raise BiliError("invalid_argument", f"锚点 {anchor} 之后找不到块的结束标签（</p> / </h1> / </figure>）。")
+    return m.end()
+
+
+@app.command()
+def embed(
+    file: Path = typer.Argument(..., help="正文 HTML 文件。"),
+    image: Path = typer.Option(..., "--image", "-i", help="要插入的图片。"),
+    after: str = typer.Option(..., "--after", "-a", help="插在这段文字所在块之后；必须原文一字不差且唯一。"),
+    caption: str = typer.Option("", "--caption", "-c", help="图注。"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="写到这个文件；不给就打印到 stdout 的 data.html。"),
+) -> None:
+    """上传一张图，并插到正文里指定段落之后，输出新的正文。
+
+    「插在哪」由 `--after` 决定：给一段正文里**独一无二**的文字，工具找到它所在的块
+    （`<p>` / `<h1>` / `<figure>`），把图片插在那个块之后。锚点找不到或不唯一都会报错，
+    不会退而求其次塞到末尾——猜错位置比失败更糟。
+    """
+
+    async def body():
+        if not file.is_file():
+            raise BiliError("invalid_argument", f"正文文件不存在：{file}")
+        if not image.is_file():
+            raise BiliError("invalid_argument", f"图片不存在：{image}")
+        html = file.read_text(encoding="utf-8")
+        pos = _find_block_end(html, after)   # 先定位，锚点有问题就别浪费一次上传
+        params = {"file": str(file), "image": str(image), "after": after}
+        if output.settings.dry_run:
+            return {"dry_run": True, "action": "article_image", "params": params, "insert_at": pos}
+        cred = config.require_credential()
+        guard.check("article_image")
+        data = await _post("article/upcover", cred, cover=_data_uri(image))
+        url = str((data or {}).get("url") or "").replace("http://", "https://")
+        if not url:
+            raise BiliError("api_error", "上传成功但没有拿到图片地址。", detail=data)
+        fig = _figure(url, caption)
+        merged = html[:pos] + "\n" + fig + "\n" + html[pos:]
+        guard.record("article_image", params, {"url": url})
+        result: dict[str, Any] = {
+            "url": url,
+            "inserted_after": after,
+            "at": pos,
+            "html": merged,
+        }
+        if out:
+            out.write_text(merged, encoding="utf-8")
+            result.pop("html")
+            result["written"] = str(out)
+            result["next"] = f"用 `bili article draft --file {out} ...` 或 `bili article update <cvid> --file {out}`"
+        else:
+            result["next"] = "把 data.html 写到文件，再传给 `--file`"
+        return result
 
     run(body)

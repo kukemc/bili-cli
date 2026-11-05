@@ -47,6 +47,10 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 合集 | `bili season list / create / add <合集ID> <BV…> / remove / delete` |
 | 写专栏（长文） | `bili article image a.png` 先传图拿 URL → `bili article draft --title … --file body.html --category 34 --cover <图URL>` → `bili article publish <cvid>`（进审核，公开链接会短暂 404）；改已发布的用 `bili article update <cvid> --file …`（原地改，cvid 不变，但会重新审核）；`bili article show <cvid> [--text]` 读回来 |
 | 等专栏过审 | `bili article watch <cvid>` 轮询作者侧的 `state`（-2 审核中 / 0 已发布 / 2 未通过），过审或驳回就返回，未通过时给 `reason`。**不用等私信**——B 站不会把审核结果私信给作者本人，但 `x/article/creative/article/view` 的状态字段一直可读 |
+| 专栏配图（插入到指定段落） | **`bili article embed body.html --image a.png --after "某段正文里独一无二的一句话" --caption "图注" --out body2.html`**——它上传图片并把 `<figure>` 插到那句话所在块的**后面**。锚点必须是原文里**一字不差且只出现一次**的片段：找不到会报错，出现两次也会报错，工具不会退而求其次塞到末尾。 |
+| 专栏配图（只要 URL） | `bili article image a.png --caption "图注"` 返回可直接粘进正文的 `<figure>` 片段（`html` 字段）和 `url`。图片块要和其它块同级，别套进 `<p>` 里。 |
+| 选锚点的窍门 | 挑一句**长且独特**的话（比如「然后就去注入、挂钩、抄 password」这种）。太短的（「是的」「所以」）会出现多次；表格里的字、代码里的字符也可能撞上。拿不准就先 `bili article show <cvid> --text` 看一眼实际正文。 |
+| 图片位置的一般原则 | 读者需要**图来对照文字**时放，不是每段都配图。通常：术语表/结构图放在解释它的那段**之后**；终端输出放在「跑一下」的命令**之后**；效果图放在描述结果的那段**之后**。一张图前后不要紧贴另一张图——中间要有文字。 |
 | 专栏配图 | `bili article image a.png` 拿到 URL，再把这个 URL 写进正文的 `<img src>`。没有「自动插进第 N 段」——B 站正文就是一段 HTML，自己拼比提供一个只会拼错的接口可靠 |
 | 专栏的 AI 声明 | 专栏编辑器**没有** AI 创作声明字段（投稿有）。`bili article draft --ai` 会在正文末尾追加一句「本内容由 AI 参与创作。」，`--no-ai` 或重跑会自动替换/移除，不会重复堆叠。这是权宜之计，编辑器真出官方字段后会换掉，调用方式不变 |
 | 专栏正文的坑 | 编辑器只保留 `p span br h1 figure img figcaption a`；**`<pre>` / `<code>` 会被降级，代码块的换行和空格全丢**——代码请渲染成图片再放 `<img>`。分类字段是 `category`（二级分类 ID），写 `category_id` 会被当成 `template_id` 悄悄吃掉 |
