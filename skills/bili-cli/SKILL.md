@@ -45,6 +45,19 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 发动态（图文、@ 人） | `bili dynamic post "内容" --image a.png --at 昵称` |
 | 发投票动态 / 看结果 | `bili dynamic post "下期做什么？" --vote "下期" --option A --option B`；`bili dynamic vote <vote_id>` |
 | 合集 | `bili season list / create / add <合集ID> <BV…> / remove / delete` |
+| 写专栏（长文） | `bili article image a.png` 先传图拿 URL → `bili article draft --title … --file body.html --category 34 --cover <图URL>` → `bili article publish <cvid>`（进审核，公开链接会短暂 404）；改已发布的用 `bili article update <cvid> --file …`（原地改，cvid 不变，但会重新审核）；`bili article show <cvid> [--text]` 读回来 |
+| 专栏的限流 | `article`（草稿/发布/改/删）**30 秒间隔 + 每小时 10 次**；配图上传是另一个桶（`article_image`，2 秒 + 60 次/小时），互不占用。**一小时 10 次很容易用完**——一篇文章走完「建→发→改→删」就 4 次了。`--wait` 只会自动等 60 秒以内的限制，更长的直接返回 `rate_limited` 和 `retry_after` |
+| 专栏的 cvid 会变 | `draft` 返回的是**草稿 ID**；`publish` 之后文章会拿到**另一个 cvid**，publish 的返回里 `draft_id` 和 `cvid` 都给了。**发布后草稿 ID 就作废了**，拿它去 `show`/`update`/`delete` 都会失败 |
+| 读草稿 vs 读文章 | 草稿只能用建草稿时的返回值；`show` 只认已发布的文章（对草稿会报「不是一篇已发布的文章」）。正文的实际内容以你手上的 HTML 文件为准，不用靠 show 回读 |
+| 专栏过审的 `state=2`（不通过） | **实测无法触发**。试过正文只有两个字、游戏分类下发菜谱、正文开头请求审核拒绝——三种都是 `state=0` 直接过审。B站专栏是机器先放行，再往上就只能发真违规内容，没有为此冒账号风险。所以 `watch` 的驳回分支（`state=2` + `reason`）在真实环境里没被走到过，只有离线测试覆盖。遇到时按代码走的逻辑是可信的，但**没有真实样本** |
+| 等专栏过审 | `bili article watch <cvid>` 轮询作者侧的 `state`（-2 审核中 / 0 已发布 / 2 未通过），过审或驳回就返回，未通过时给 `reason`。**不用等私信**——B 站不会把审核结果私信给作者本人，但 `x/article/creative/article/view` 的状态字段一直可读 |
+| 专栏配图（插入到指定段落） | **`bili article embed body.html --image a.png --after "某段正文里独一无二的一句话" --caption "图注" --out body2.html`**——它上传图片并把 `<figure>` 插到那句话所在块的**后面**。锚点必须是原文里**一字不差且只出现一次**的片段：找不到会报错，出现两次也会报错，工具不会退而求其次塞到末尾。 |
+| 专栏配图（只要 URL） | `bili article image a.png --caption "图注"` 返回可直接粘进正文的 `<figure>` 片段（`html` 字段）和 `url`。图片块要和其它块同级，别套进 `<p>` 里。 |
+| 选锚点的窍门 | 挑一句**长且独特**的话（比如「然后就去注入、挂钩、抄 password」这种）。太短的（「是的」「所以」）会出现多次；表格里的字、代码里的字符也可能撞上。拿不准就先 `bili article show <cvid> --text` 看一眼实际正文。 |
+| 图片位置的一般原则 | 读者需要**图来对照文字**时放，不是每段都配图。通常：术语表/结构图放在解释它的那段**之后**；终端输出放在「跑一下」的命令**之后**；效果图放在描述结果的那段**之后**。一张图前后不要紧贴另一张图——中间要有文字。 |
+| 专栏配图 | `bili article image a.png` 拿到 URL，再把这个 URL 写进正文的 `<img src>`。没有「自动插进第 N 段」——B 站正文就是一段 HTML，自己拼比提供一个只会拼错的接口可靠 |
+| 专栏的 AI 声明 | 专栏编辑器没有 AI 声明字段（投稿有），`--ai` 在正文末尾追加一段。**三项都要自己给**：`--ai-client "DeepSeek Harness" --ai-model "deepseek-flash" --ai-agent "小爪"`，各占一行。工具**不猜**你的运行时和模型——它不知道自己在哪跑，也不该假定。缺 `--ai-model` / `--ai-agent` 会出警告。这不是免责话术，是让人能追责和复现的元数据。幂等（先摘再加），`--no-ai` 或重跑不会堆叠 |
+| 专栏正文的坑 | 编辑器只保留 `p span br h1 figure img figcaption a`；**`<pre>` / `<code>` 会被降级，代码块的换行和空格全丢**——代码请渲染成图片再放 `<img>`。分类字段是 `category`（二级分类 ID），写 `category_id` 会被当成 `template_id` 悄悄吃掉 |
 | 私信自动回复（B 站自带，需 1000 粉） | `bili dm autoreply show`；改之前必须先给用户看 `--dry-run` 并得到同意 |
 | 投稿 | `bili upload video a.mp4 --title … --tag …`（默认带“含AI生成内容”声明；`--topic` 话题 / 活动、`--schedule` 定时 + `--reserve` 预约、`--season` 进合集、`--staff "策划:UID"` 联合投稿） |
 | 改已投稿件的标题 / 简介 / 标签 / 封面 | `bili upload edit <BV> --title …`（会重新审核，先给用户看 `--dry-run`） |
