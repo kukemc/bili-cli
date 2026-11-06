@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added
+- `bili article`：专栏的建草稿 / 传图 / 发布 / 原地编辑 / 删除 / 读取。创作中心这套接口没有 bilibili-api 封装，实现里记了几个坑：分类字段是 `category` 而不是 `category_id`、`submit` 必须一次给全 `title`+`content`+`category`+`reprint`、上传图片要 `data:` URI、编辑已发布文章要走 `article/update`（`submit` 会新建一篇）。
+
 ## [1.3.0] - 2026-11-04
 
 ### Added
