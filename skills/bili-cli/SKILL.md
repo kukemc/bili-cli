@@ -45,6 +45,9 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 发动态（图文、@ 人） | `bili dynamic post "内容" --image a.png --at 昵称` |
 | 发投票动态 / 看结果 | `bili dynamic post "下期做什么？" --vote "下期" --option A --option B`；`bili dynamic vote <vote_id>` |
 | 合集 | `bili season list / create / add <合集ID> <BV…> / remove / delete` |
+| 写专栏（长文） | `bili article drafts` 列草稿（建过但忘了 cvid 时找回）、`bili article articles` 列已发布；`bili article draft --title … --file body.html --category 34` → `bili article publish <cvid>`；配图用 `bili article image` 或 `bili article embed`；**`draft` 返回的是草稿 ID，`publish` 之后会变成另一个 cvid** |
+| 专栏的限流与坑 | `article` 桶 30 秒间隔 + 每小时 10 次（存草稿走 `article_draft` 桶）；编辑器只保留 `p span br h1 figure img figcaption a strong blockquote ul ol li`，**代码块要渲染成图片，分割线 `<hr>` 也会丢** |
+| 等专栏过审 | `bili article watch <cvid>` 轮询作者侧 `state`（-2 审核中 / 0 已发布 / 2 未通过；`1` 待审核会继续等），不用等私信 |
 | 私信自动回复（B 站自带，需 1000 粉） | `bili dm autoreply show`；改之前必须先给用户看 `--dry-run` 并得到同意 |
 | 投稿 | `bili upload video a.mp4 --title … --tag …`（默认带“含AI生成内容”声明；`--topic` 话题 / 活动、`--schedule` 定时 + `--reserve` 预约、`--season` 进合集、`--staff "策划:UID"` 联合投稿） |
 | 改已投稿件的标题 / 简介 / 标签 / 封面 | `bili upload edit <BV> --title …`（会重新审核，先给用户看 `--dry-run`） |
