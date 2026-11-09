@@ -136,7 +136,34 @@ bili upload edit <BV> --video fixed.mp4                     # 换源：上传新
 
 改稿（`upload edit`）会让稿件重新审核，审核期间新内容不生效；B 站可能丢弃个别标签，改完用 `upload status` 确认。评论区被关闭或精选的稿件请到网页端改（命令会直接拒绝）。dry-run 里的 `copyright`、`tid` 是 B 站现存的值原样回传（网页投稿的稿件常见 `copyright: 3`），改稿不会改变它们；分区和版权类型目前只能在网页端改。
 
-## 8. UP 主运营工具
+## 8. 写专栏（长文）
+
+```bash
+bili article categories                                  # 先查二级分类 ID（发布必填，否则 20022）
+bili article drafts                                      # 草稿箱：建过但忘了 cvid 时先用这个找回
+bili article articles                                    # 已发布的专栏列表
+bili article draft --title "标题" --file body.html --category 34   # 建草稿，返回草稿 ID
+bili article image a.png --caption "图注"                 # 传图，拿到可直接粘进正文的 <figure> 片段
+bili article embed body.html --image a.png --after "某段独一无二的话" --out body2.html
+bili article publish <草稿ID>                            # 提交发布（进审核），返回真正的 cvid
+bili article update <cvid> --file body2.html             # 原地改（会重新审核，cvid 不变）
+bili article show <cvid> --text                          # 读回正文
+bili article watch <cvid>                                # 等过审
+```
+
+**cvid 会变。** `draft` 返回的是草稿 ID；`publish` 之后文章拿到另一个 cvid。发布后草稿 ID 就作废了，拿它去 `show` / `update` / `delete` 都会失败。`show` 也只认已发布的文章。
+
+**正文是 HTML，编辑器有标签白名单。** 只保留 `p span br h1 figure img figcaption a strong blockquote ul ol li`。`<pre>` / `<code>` 会被降级，代码块的换行和空格全丢——**代码请渲染成图片再放 `<img>`**；`<hr>` 也会被丢掉（实测，分割线改用图片或留白）分类字段叫 `category`，写成 `category_id` 会被当成 `template_id` 悄悄吃掉。
+
+**配图两种。** `image` 只上传并返回 `<figure>` 片段，位置由你拼；`embed --after` 真的把图插进正文。锚点必须是原文里**一字不差且只出现一次**的片段——找不到或出现多次都直接报错，不会退而求其次塞到末尾。图片块要和其它块同级，别套进 `<p>` 里。
+
+**AI 声明。** 专栏编辑器没有 AI 声明字段（投稿有），`--ai` 在正文末尾追加一段，幂等（先摘再加），`--no-ai` 或重跑不会堆叠。三项都要自己给：`--ai-client "DeepSeek Harness" --ai-model "deepseek-flash" --ai-agent "小爪"`，各占一行；缺 `--ai-model` / `--ai-agent` 会出警告。工具不猜你的运行时和模型——它不知道自己在哪跑。`update` 换正文时如果不带 `--ai` / `--no-ai`，会沿用原来的声明（连同里面的模型和智能体），不会悄悄丢掉。
+
+**限流。** 发布 / 改 / 删走 `article` 桶（30 秒间隔、每小时 10 次），存草稿走 `article_draft` 桶，配图走 `article_image`（2 秒、60 次/小时）。`--wait` 只自动等 60 秒以内的限制，更长的直接返回 `rate_limited` 和 `retry_after`。
+
+**过审。** `watch` 轮询作者侧的 `state`：-2 审核中 / 0 已发布 / 2 未通过 / 1 待审核。只有 0 和 2 是终点，`1` 会继续等（`--interval` 最小 10 秒，`--timeout` 默认 600 秒）。不用等私信——B 站不会把审核结果私信给作者本人。
+
+## 9. UP 主运营工具
 
 ```bash
 bili upload chapters set <BV> -c "0:00 开场" -c "1:30 正片"     # 进度条分段章节
