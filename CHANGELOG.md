@@ -5,6 +5,14 @@
 ## [Unreleased]
 
 ### Added
+- `bili user coins <UID|昵称>`：对方在主页公开的最近投币（视频、投了几个币、投币时间），输出不含 IP 属地。
+- `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。
+- `bili user bangumi <UID|昵称> --type bangumi|cinema`：对方公开的追番 / 追剧，`--page` / `--size` 翻页，有下一页时给 `next_with`。
+- `bili user likes`（最近点赞，最多 20 个）、`bili user games`（最近玩过的游戏）、`bili user collections`（合集和系列）、`bili user articles`（专栏文章）；没公开时同样返回 `hidden: true`。
+- `bili user following` / 新增的 `bili user followers` 可以传 UID 或昵称看别人的关注和粉丝；不传还是看自己；按解析后的 UID 判断本人，查看他人仅允许前 5 页（含 `--raw`），超出返回 `invalid_argument`，不返回 `next_with`。
+- `bili user info --sections` 显式查询主页总览 `sections`：每个板块的数量（来自主页导航栏，不反映隐私设置）和前 3 条预览，对方没公开的板块标 `hidden`；`more_with` 提示各板块命令。默认 `info` 不额外查询导航与预览；预览最多 2 个并发，失败标记 `error`，导航失败见 `sections_error.navnum`；`--raw --sections` 仅附加 `navnum`。
+- `bili user videos` 的 `items` 保持接口原始排序、条数和分页，第一页的置顶和代表作单列在新增的 `pinned` 字段，带 `label`。
+- 新增的公开板块命令及关注 / 粉丝列表需要登录。对方没公开时（53013 / 22115 / 22118）返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
 - `bili article`：专栏的建草稿 / 传图 / 发布 / 原地编辑 / 删除 / 读取，`drafts` 与 `articles` 分别列出草稿箱和已发布文章。创作中心这套接口没有 bilibili-api 封装，实现里记了几个坑：分类字段是 `category` 而不是 `category_id`、`submit` 必须一次给全 `title`+`content`+`category`+`reprint`、上传图片要 `data:` URI、编辑已发布文章要走 `article/update`（`submit` 会新建一篇）。存草稿走独立的本地限流桶（`article_draft`），不占用发布用的 `article` 桶。
 
 ## [1.3.0] - 2026-11-04
