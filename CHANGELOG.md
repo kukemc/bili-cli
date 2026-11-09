@@ -13,6 +13,7 @@
 - `bili user info --sections` 显式查询主页总览 `sections`：每个板块的数量（来自主页导航栏，不反映隐私设置）和前 3 条预览，对方没公开的板块标 `hidden`；`more_with` 提示各板块命令。默认 `info` 不额外查询导航与预览；预览最多 2 个并发，失败标记 `error`，导航失败见 `sections_error.navnum`；`--raw --sections` 仅附加 `navnum`。
 - `bili user videos` 的 `items` 保持接口原始排序、条数和分页，第一页的置顶和代表作单列在新增的 `pinned` 字段，带 `label`。
 - 新增的公开板块命令及关注 / 粉丝列表需要登录。对方没公开时（53013 / 22115 / 22118）返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
+- `bili article`：专栏的建草稿 / 传图 / 发布 / 原地编辑 / 删除 / 读取，`drafts` 与 `articles` 分别列出草稿箱和已发布文章。创作中心这套接口没有 bilibili-api 封装，实现里记了几个坑：分类字段是 `category` 而不是 `category_id`、`submit` 必须一次给全 `title`+`content`+`category`+`reprint`、上传图片要 `data:` URI、编辑已发布文章要走 `article/update`（`submit` 会新建一篇）。存草稿走独立的本地限流桶（`article_draft`），不占用发布用的 `article` 桶。
 
 ## [1.3.0] - 2026-11-04
 
