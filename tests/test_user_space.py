@@ -152,7 +152,7 @@ def test_info_sections_preview_all_public_and_raw(patch_user, monkeypatch):
         return {"list": [{"title": f"fav{i}", "attr": 0} for i in range(4)] + [{"title": "private-folder", "attr": 1}]}
     monkeypatch.setattr(user_cmd.favorite_list, "get_video_favorite_list", favs)
 
-    data = _data(runner.invoke(app, ["user", "info", "2"]))
+    data = _data(runner.invoke(app, ["user", "info", "2", "--sections"]))
     sections = data["sections"]
     assert sections["videos"] == {"count": 9, "preview": ["video0", "video1", "video2"]}
     assert sections["coins"] == {"preview": ["coin0", "coin1", "coin2"]}
@@ -170,7 +170,7 @@ def test_info_sections_preview_all_public_and_raw(patch_user, monkeypatch):
 
     FakeUser.calls = []
     FakeApi.calls = []
-    raw = _data(runner.invoke(app, ["--raw", "user", "info", "2"]))
+    raw = _data(runner.invoke(app, ["--raw", "user", "info", "2", "--sections"]))
     assert "navnum" in raw
     assert not {call["method"] for call in FakeUser.calls} & {"get_videos", "get_subscribed_bangumi", "get_channel_list", "get_articles", "get_followings"}
     assert len([call for call in FakeApi.calls if call.url != nav_url]) == 0
@@ -188,10 +188,10 @@ def test_info_preview_privacy_failures_and_empty(patch_user, monkeypatch):
     FakeUser.responses.update({"get_videos": {"list": {"vlist": [{"title": "video"}]}},
         "get_subscribed_bangumi": {"list": []}, "get_channel_list": {"items_lists": {"page": {"total": 0}}},
         "get_articles": {"pn": 1, "ps": 3}, "get_followings": {"total": 4, "list": []}})
-    data = _data(runner.invoke(app, ["user", "info", "2"]))
+    data = _data(runner.invoke(app, ["user", "info", "2", "--sections"]))
     assert data["sections"]["coins"] == {"hidden": True}
     assert data["sections"]["favs"] == {"count": 7, "hidden": True}
-    assert "likes" not in data["sections"]
+    assert data["sections"]["likes"] == {"error": "risk_control"}
     assert data["sections"]["videos"] == {"count": 3, "preview": ["video"]}
     assert data["sections"]["articles"]["preview"] == []
     assert "more_with" in data
@@ -199,11 +199,11 @@ def test_info_preview_privacy_failures_and_empty(patch_user, monkeypatch):
     FakeApi.responses[nav_url] = RuntimeError("offline")
     FakeApi.responses[user_cmd.COIN_URL] = [{"title": "coin"}]
     FakeApi.responses[user_cmd.LIKE_URL] = {"list": []}
-    data = _data(runner.invoke(app, ["user", "info", "2"]))
+    data = _data(runner.invoke(app, ["user", "info", "2", "--sections"]))
     assert data["sections"]["videos"] == {"preview": ["video"]}
     assert "count" not in data["sections"]["videos"]
     assert "more_with" in data
-    assert runner.invoke(app, ["user", "info", "2"]).exit_code == 0
+    assert runner.invoke(app, ["user", "info", "2", "--sections"]).exit_code == 0
 
 
 def test_videos_front_items_deduplicate_and_metrics(patch_user):
@@ -219,10 +219,10 @@ def test_videos_front_items_deduplicate_and_metrics(patch_user):
         ]}},
     })
     data = _data(runner.invoke(app, ["user", "videos", "2"]))
-    assert [x.get("label") for x in data["items"][:2]] == ["置顶", "代表作"]
+    assert [x.get("label") for x in data["pinned"]] == ["置顶", "代表作"]
     assert [x["bvid"] for x in data["items"]] == ["BVtop", "BVmp", "BVnormal"]
-    assert data["items"][0]["length"] == "03:51"
-    assert {k: data["items"][0][k] for k in ("play", "comment", "danmaku")} == {
+    assert data["pinned"][0]["length"] == "03:51"
+    assert {k: data["pinned"][0][k] for k in ("play", "comment", "danmaku")} == {
         "play": 12, "comment": 3, "danmaku": 4}
     assert "label" not in data["items"][-1]
 
@@ -248,7 +248,7 @@ def test_following_default_mutual_and_other_pagination(patch_user):
     assert FakeUser.calls[-1]["mid"] == 100 and "next_with" not in own
     other = _data(runner.invoke(app, ["user", "following", "2"]))
     assert "mutual" not in other["items"][0]
-    assert other["next_with"] == "bili user following 2 --page 2"
+    assert "next_with" not in other
     FakeUser.responses["get_followings"] = _privacy_error()
     assert _data(runner.invoke(app, ["user", "following", "2"]))["hidden"] is True
 
@@ -257,7 +257,7 @@ def test_followers_other_pagination_and_privacy(patch_user):
     _login()
     FakeUser.responses["get_followers"] = {"total": 120, "list": [{"mid": 4, "uname": "fan"}]}
     data = _data(runner.invoke(app, ["user", "followers", "2"]))
-    assert data["next_with"] == "bili user followers 2 --page 2"
+    assert "next_with" not in data
     assert FakeUser.calls[-1]["method"] == "get_followers"
     FakeUser.responses["get_followers"] = _privacy_error()
     assert _data(runner.invoke(app, ["user", "followers", "2"]))["hidden"] is True
@@ -326,3 +326,169 @@ def test_public_commands_require_login_before_fetch(patch_user):
         assert result.exit_code == 3, result.output
         assert json.loads(result.stdout)["error"]["code"] == "not_logged_in"
     assert FakeApi.calls == [] and FakeUser.calls == []
+
+
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("logged_in", [False, True])
+def test_info_default_only_requests_profile(patch_user, monkeypatch, raw, logged_in):
+    if logged_in:
+        _login()
+
+    async def unexpected_favs(*args, **kwargs):
+        pytest.fail("default info must not request folders")
+
+    monkeypatch.setattr(user_cmd.favorite_list, "get_video_favorite_list", unexpected_favs)
+    args = (["--raw"] if raw else []) + ["user", "info", "2"]
+    data = _data(runner.invoke(app, args))
+    assert "sections" not in data and "more_with" not in data and "navnum" not in data
+    assert [c["method"] for c in FakeUser.calls] == ["get_user_info", "get_relation_info", "get_up_stat"]
+    assert FakeApi.calls == []
+
+
+@pytest.mark.parametrize("order", ["new", "views", "favorites"])
+def test_videos_preserve_sort_size_and_page_boundaries(patch_user, monkeypatch, order):
+    pages = {
+        1: [{"bvid": f"BV{i}", "play": 100 - i} for i in range(5)],
+        2: [{"bvid": f"BV{i}", "play": 100 - i} for i in range(5, 10)],
+    }
+    FakeUser.responses.update({"get_top_videos": _video("BV7"),
+                               "get_masterpiece": [_video("BV2"), _video("BVmp")]})
+
+    async def get_videos(self, **kwargs):
+        FakeUser.calls.append({"method": "get_videos", "kwargs": kwargs})
+        return {"page": {"count": 10}, "list": {"vlist": pages[kwargs["pn"]]}}
+
+    monkeypatch.setattr(FakeUser, "get_videos", get_videos)
+    results = []
+    for page in (1, 2):
+        result = _data(runner.invoke(app, ["user", "videos", "2", "--order", order,
+                                         "--size", "5", "--page", str(page)]))
+        assert len(result["items"]) == 5 and result["total"] == 10 and result["page"] == page
+        assert [v["bvid"] for v in result["items"]] == [v["bvid"] for v in pages[page]]
+        assert [v["play"] for v in result["items"]] == [v["play"] for v in pages[page]]
+        results.extend(v["bvid"] for v in result["items"])
+        assert [v["bvid"] for v in result["pinned"]] == (["BV7", "BV2", "BVmp"] if page == 1 else [])
+    assert len(set(results)) == 10
+    calls = [c for c in FakeUser.calls if c["method"] == "get_videos"]
+    assert [c["kwargs"] for c in calls] == [
+        {"pn": p, "ps": 5, "keyword": "", "order": user_cmd.VIDEO_ORDERS[order]} for p in (1, 2)]
+
+
+def test_videos_raw_preserves_api_pagination_and_redacts_ip(patch_user):
+    FakeUser.responses["get_videos"] = {"page": {"count": 2}, "list": {"vlist": [
+        {"bvid": "BVsecond", "play": 2, "ip": "secret"}, {"bvid": "BVfirst", "play": 1}]}}
+    data = _data(runner.invoke(app, ["--raw", "user", "videos", "2", "--order", "views", "--size", "2"]))
+    assert data == {"page": {"count": 2}, "list": {"vlist": [
+        {"bvid": "BVsecond", "play": 2}, {"bvid": "BVfirst", "play": 1}]}}
+    assert [c["method"] for c in FakeUser.calls] == ["get_videos"]
+
+
+@pytest.mark.parametrize("cmd,method,code", [
+    ("following", "get_followings", 22115), ("followers", "get_followers", 22118),
+    ("following", "get_followings", 53013), ("followers", "get_followers", 53013),
+])
+@pytest.mark.parametrize("raw", [False, True])
+def test_follow_list_privacy_codes(patch_user, cmd, method, code, raw):
+    _login()
+    FakeUser.responses[method] = ResponseCodeException(code, "private", {})
+    args = (["--raw"] if raw else []) + ["user", cmd, "2"]
+    assert _data(runner.invoke(app, args)) == {"mid": 2, "hidden": True, "items": []}
+
+
+@pytest.mark.parametrize("cmd,method", [("following", "get_followings"), ("followers", "get_followers")])
+@pytest.mark.parametrize("raw", [False, True])
+def test_follow_list_identity_and_page_limits(patch_user, monkeypatch, cmd, method, raw):
+    _login()
+    FakeUser.responses[method] = {"total": 10000, "list": [{"mid": 9, "uname": "n", "attribute": 6}]}
+
+    async def search_by_type(who, **kwargs):
+        return {"result": [{"mid": 100 if who == "myself" else 2, "uname": who}]}
+
+    monkeypatch.setattr(user_cmd.search, "search_by_type", search_by_type)
+    prefix = (["--raw"] if raw else []) + ["user", cmd]
+    for target in ([], ["100"], ["myself"]):
+        data = _data(runner.invoke(app, prefix + target + ["--page", "6"]))
+        assert FakeUser.calls[-1]["mid"] == 100
+        assert FakeUser.calls[-1]["kwargs"] == {"pn": 6, "ps": 50}
+        assert "next_with" not in data
+        if not raw:
+            assert data["items"][0]["mutual"] is True
+    for target in ("2", "someone"):
+        for page in (1, 5):
+            data = _data(runner.invoke(app, prefix + [target, "--page", str(page), "--size", "5"]))
+            assert "next_with" not in data
+            assert FakeUser.calls[-1]["kwargs"] == {"pn": page, "ps": 5}
+            if not raw:
+                assert "mutual" not in data["items"][0]
+        FakeUser.calls = []
+        result = runner.invoke(app, prefix + [target, "--page", "6"])
+        assert result.exit_code == 2
+        assert json.loads(result.stdout)["error"]["code"] == "invalid_argument"
+        assert FakeUser.calls == []  # rejected before fetching the target list, including --raw
+
+
+@pytest.mark.parametrize("cmd,method", [("following", "get_followings"), ("followers", "get_followers")])
+def test_follow_list_missing_identity_cannot_bypass_limit(patch_user, cmd, method):
+    config.save_credential(config.Credential(sessdata="s", bili_jct="j"))
+    FakeUser.responses[method] = {"total": 0, "list": []}
+    assert _data(runner.invoke(app, ["user", cmd, "2"]))["mid"] == 2
+    FakeUser.calls = []
+    result = runner.invoke(app, ["user", cmd, "2", "--page", "6"])
+    assert result.exit_code == 2 and FakeUser.calls == []
+    result = runner.invoke(app, ["user", cmd])
+    assert result.exit_code == 3
+    assert json.loads(result.stdout)["error"]["code"] == "auth_expired"
+
+
+@pytest.mark.parametrize("error,expected", [
+    (ResponseCodeException(-412, "risk", {}), "risk_control"),
+    (ResponseCodeException(-509, "limited", {}), "rate_limited"),
+    (ResponseCodeException(99999, "unknown", {}), "api_error"),
+    (TimeoutError("offline"), "network_error"),
+])
+def test_section_errors_are_distinct_from_private_and_empty(patch_user, monkeypatch, error, expected):
+    _login()
+    FakeApi.responses[user_cmd.LIKE_URL] = error
+    FakeApi.responses[user_cmd.COIN_URL] = []
+    FakeApi.responses[user_cmd.GAME_URL] = {"list": []}
+    FakeUser.responses["get_followings"] = ResponseCodeException(22115, "private", {})
+
+    async def favs(*args, **kwargs):
+        return {"list": []}
+
+    monkeypatch.setattr(user_cmd.favorite_list, "get_video_favorite_list", favs)
+    sections = _data(runner.invoke(app, ["user", "info", "2", "--sections"]))["sections"]
+    assert sections["likes"] == {"error": expected}
+    assert sections["following"] == {"hidden": True}
+    assert sections["coins"] == {"preview": []}
+
+
+def test_section_concurrency_is_bounded(patch_user, monkeypatch):
+    import asyncio
+
+    active = 0
+    maximum = 0
+    calls = 0
+
+    async def fetch_preview(fetch, pick, count=None):
+        nonlocal active, maximum, calls
+        calls += 1
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0)  # let other previews enter; no real HTTP or timing dependency
+        active -= 1
+        return {"preview": []}
+
+    monkeypatch.setattr(user_cmd, "_preview", fetch_preview)
+    _data(runner.invoke(app, ["user", "info", "2", "--sections"]))
+    assert calls == 9 and maximum == 2
+
+
+@pytest.mark.parametrize("raw", [False, True])
+def test_info_reports_navnum_failure(patch_user, monkeypatch, raw):
+    FakeApi.responses[user_cmd.NAVNUM_URL] = ResponseCodeException(-352, "risk", {})
+    async def preview(*args, **kwargs):
+        return {"preview": []}
+    monkeypatch.setattr(user_cmd, "_preview", preview)
+    data = _data(runner.invoke(app, (["--raw"] if raw else []) + ["user", "info", "2", "--sections"]))
+    assert data["sections_error"] == {"navnum": "risk_control"}

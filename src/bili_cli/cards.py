@@ -46,7 +46,7 @@ def video_card(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _seen_path():
-    return config.home() / "seen.json"
+    return config.state_home() / "seen.json"
 
 
 def load_seen() -> dict[str, float]:
@@ -59,7 +59,14 @@ def load_seen() -> dict[str, float]:
 def mark_seen(bvid: str) -> None:
     seen = load_seen()
     seen[bvid] = time.time()
-    _seen_path().write_text(json.dumps(seen), encoding="utf-8")
+    try:
+        path = _seen_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(seen), encoding="utf-8")
+    except OSError as exc:
+        from . import output
+
+        output.info(f"警告：无法保存已看列表（{exc}）；不影响本次结果。")
 
 
 def filter_unseen(cards: list[dict[str, Any]], unseen: bool) -> list[dict[str, Any]]:

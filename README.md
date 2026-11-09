@@ -113,8 +113,8 @@ $ bili dm send owner "今天科技区第二名很有意思：有人造了一块�
 ### 📊 看数据、做复盘
 - **单条稿件**：播放、每百次播放的点赞 / 收藏 / 投币率、**完播率、平均观看时长**
 - **整个账号**：播放、访客、涨粉和上一周期对比，手机 / 电脑播放占比，粉丝贡献了多少播放，**超过多少同类 UP 主**
-- **数据中心**：累计总量与昨日增量、30 天增量曲线、观众画像（粉丝 vs 路人的性别 / 年龄 / 省份 / 兴趣标签）、粉丝来源、稿件数据表，以及单稿的 **3 秒退出率、封面点击倍数、播转粉率**和同类分位（`bili data`）
-- **看别人**：任意 UP 主的资料与主页总览、投稿（置顶 / 代表作在前，按播放排序找爆款、按关键词筛系列）、动态、关注与粉丝、合集和专栏，以及对方公开的最近投币、收藏夹、追番、点赞和玩过的游戏
+- **数据中心**：累计总量与昨日增量、30 天增量曲线、观众画像（粉丝 vs 路人的性别 / 年龄 / 省份 / 兴趣标签）、粉丝来源、稿件数据表，以及单稿的 **性别 / 年龄 / 兴趣标签、3 秒退出率、封面点击倍数、播转粉率**和同类分位（`bili data`）
+- **看别人**：任意 UP 主的资料、按需查询的主页总览（`user info --sections`）、投稿（置顶 / 代表作单列在 `pinned`，按播放排序找爆款、按关键词筛系列）、动态、关注与粉丝、合集和专栏，以及对方公开的最近投币、收藏夹、追番、点赞和玩过的游戏
 
 ### 🎛️ UP 主高级玩法
 给自己的视频加**进度条分段章节**、**互动投票**、**评分弹幕**、**一键三连按钮**、**下期预告**、**关联视频卡片**，还能看投票结果和评分均分。
@@ -198,11 +198,11 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili feed inbox` | 一次看完所有新消息（读取后 B 站标为已读） |
 | `bili feed replies / mentions / likes / system / notifications` | 回复、@、赞、系统通知、未读数 |
 | `bili feed recommend / timeline` | 首页推荐、关注动态（`--type video` 只看新投稿，`--up` 只看一个人） |
-| `bili user follow / unfollow / following / followers` | 关注、取关；我（或别人）的关注和粉丝列表 |
+| `bili user follow / unfollow / following / followers` | 关注、取关；我（或别人）的关注和粉丝列表；看别人仅前 5 页，不返回 `next_with` |
 | `bili user block / unblock / blocked` | 拉黑、解除拉黑、我的黑名单（应对骚扰） |
 | `bili hot search / popular / weekly / precious / rank` | 热搜、综合热门、每周必看、入站必刷、排行榜 |
 | `bili search video / user` | 搜索 |
-| `bili user info / videos` | 任意用户的资料、粉丝数、投稿列表（按播放 / 收藏排序，按关键词筛系列）、主页总览（各板块数量 + 前 3 条预览）；第一页置顶 / 代表作在前；动态用 `bili dynamic list --mid` |
+| `bili user info / videos` | 任意用户的资料、粉丝数、投稿列表（按播放 / 收藏排序，按关键词筛系列）、加 `--sections` 才查主页总览（各板块数量 + 前 3 条预览）；`items` 保持接口排序和分页，第一页置顶 / 代表作单列在 `pinned`；动态用 `bili dynamic list --mid` |
 | `bili user coins` | 对方公开的最近投币 |
 | `bili user favs` | 对方公开的收藏夹，只列夹名和数量 |
 | `bili user bangumi` | 对方公开的追番 / 追剧，`--type cinema` 看追剧 |
@@ -222,11 +222,15 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili upload video / edit / list / status / stats / zones` | 投稿、改稿（`--desc-at` 简介里 @ 人，`--video` 换源）、稿件管理、单稿数据（互动率、完播率） |
 | `bili upload chapters show / set / clear` | 分段章节 |
 | `bili me show / stats / set-sign / set-name / set-avatar` | 个人资料、创作中心数据 |
-| `bili data overview / trend / audience / fans / videos / video / diagnose` | 数据中心：累计与昨日增量、30 天趋势、观众画像、粉丝、稿件数据表、单稿诊断（3 秒退出率 / 封面点击倍数 / 播转粉率 / 同类分位） |
+| `bili data overview / trend / audience / fans / active-hours / videos / video / diagnose` | 数据中心：累计与昨日增量、30 天趋势、观众画像、粉丝、粉丝活跃时间（24 小时 / 星期分布 + 大盘对比）、稿件数据表、单稿诊断（性别 / 年龄 / 兴趣标签 / 3 秒退出率 / 封面点击倍数 / 播转粉率 / 同类分位） |
 | `bili asr setup local / setup cloud / status / use` | 语音转写引擎 |
 | `bili skills install / uninstall / status / show` | 把技能装进 Agent |
 | `bili mcp serve / install / uninstall` | MCP 服务与客户端配置 |
 | `bili schema` | 机器可读的完整命令描述 |
+
+`bili user info <UID|昵称>` 默认只查资料；`--sections` 才额外查主页导航数量和预览，预览最多 2 个并发请求。板块未公开返回 `hidden: true`（识别 53013 / 22115 / 22118）；查询失败返回 `error`（如 `risk_control`），公开但为空返回 `preview: []`。导航数量不反映隐私设置，查询失败另在 `sections_error.navnum` 标明。`--raw` 默认保留原始资料，只有加 `--sections` 才额外查询并返回 `navnum`，不展开预览。
+
+查看他人的关注 / 粉丝列表（含 `--raw`）仅允许 `--page 1` 到 `5`，超出返回 `invalid_argument`，不提供 `next_with`。本人列表不受此页数限制，传入自己的 UID 或完整昵称也按本人处理；无法确认身份时按他人限制。不绕过未公开设置，不批量采集。
 
 全局参数可写在任意位置：`--dry-run`、`--wait`（遇到 60 秒内能恢复的限流自动等待）、`--raw`（B 站原始数据）、`--pretty` / `--compact`。视频参数都接受 BV 号、av 号或链接。
 
@@ -273,6 +277,18 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 设置环境变量 `BILI_CLI_HOME` 指向不同目录，每个目录是一套独立的登录、限流和审计日志。本项目不提供批量控制多账号的功能。
 
 **命令卡住怎么办？** 不会无限卡住：普通命令超过 3 分钟没完成会自己中止，返回 `network_error`，Agent 重试即可；投稿、语音转写、`dm watch` 这类长任务不受限制。用环境变量 `BILI_CLI_TIMEOUT` 改上限（秒，0 表示不限）。单个读请求最多等 45 秒。报错里带 `stalled_seconds` 说明整个进程被暂停过（机器或容器挂起、CPU 被占满），不是网络问题；排查时加 `BILI_CLI_DEBUG=1`，stderr 会打出每个请求的耗时。
+
+</details>
+
+<details>
+<summary>在沙箱 / 只读环境里，写操作为什么会报错？</summary>
+
+写操作成功后 bili-cli 要记一条本地记录（`ratelimit.json`、`audit.log`），默认写在配置目录。如果进程只能写某个工作区（沙箱、只读容器），这一步会失败。现在分两层处理：
+
+- 真正调用接口**之前**，`guard.check()` 会先确认状态目录可写；写不了就直接报错（此时还没有产生任何副作用），并在 hint 里提示设置 `BILI_CLI_STATE_DIR`。
+- 接口成功之后如果状态仍然写不进去，只往 stderr 打一条警告，命令仍返回 `ok: true`——不要因为记账失败让 Agent 误以为没发出去而重发。
+
+设置 `BILI_CLI_STATE_DIR` 指向一个可写目录即可把状态文件挪过去：`ratelimit.json`、`audit.log`、`seen.json` 会写到那里，登录凭证仍然留在 `BILI_CLI_HOME`（Windows：`%APPDATA%\bili-cli`）。确实不需要本地限流时，可以设 `BILI_CLI_NO_RATE_LIMIT=1` 跳过检查。
 
 </details>
 

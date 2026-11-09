@@ -12,10 +12,10 @@ from bilibili_api.exceptions import ResponseCodeException
 from bilibili_api.utils.network import Api
 
 from .. import config, output
-from ..errors import BiliError
+from ..errors import BiliError, from_exception
 from ..runtime import iso_time, run, strip_html
 
-app = typer.Typer(help="查看任意用户：资料与主页总览、投稿（置顶 / 代表作在前）、关注与粉丝、公开的投币 / 收藏夹 / 追番 / 点赞 / 游戏、合集、专栏；关注 / 取关、拉黑 / 解除拉黑。", no_args_is_help=True)
+app = typer.Typer(help="查看任意用户：资料与主页总览、投稿（置顶 / 代表作单列）、关注与粉丝、公开的投币 / 收藏夹 / 追番 / 点赞 / 游戏、合集、专栏；关注 / 取关、拉黑 / 解除拉黑。", no_args_is_help=True)
 
 USER_ARG = typer.Argument(..., help="UID，或完整昵称（会用搜索找到昵称完全一致的用户）。")
 VIDEO_ORDERS = {"new": user.VideoOrder.PUBDATE, "views": user.VideoOrder.VIEW, "favorites": user.VideoOrder.FAVORITE}
@@ -24,7 +24,9 @@ NAVNUM_URL = "https://api.bilibili.com/x/space/navnum"
 LIKE_URL = "https://api.bilibili.com/x/space/like/video"
 GAME_URL = "https://api.bilibili.com/x/space/lastplaygame/v2"
 COIN_URL = "https://api.bilibili.com/x/space/coin/video"
-PRIVACY_CODE = 53013  # 用户隐私设置未公开
+PRIVACY_CODES = {53013, 22115, 22118}  # 主页板块、关注列表、粉丝列表未公开
+OTHER_USER_MAX_PAGE = 5
+SECTION_CONCURRENCY = 2
 PREVIEW = 3
 BANGUMI_TYPES = {"bangumi": user.BangumiType.BANGUMI, "cinema": user.BangumiType.DRAMA}
 FOLLOW_STATUS = {1: "想看", 2: "在看", 3: "看过"}
@@ -39,11 +41,11 @@ def _next_with(cmd: str, mid: int, page: int, size: int, total: Any, default_siz
 
 
 async def _public(fetch: Callable[[], Awaitable[Any]]) -> Any:
-    """接口结果；对方没公开（53013）时返回 None。收藏夹接口未公开时本身就返回 None，调用方一并当作隐藏。其他错误照常抛出。"""
+    """接口结果；对方没公开时返回 None。收藏夹接口未公开时本身就返回 None，调用方一并当作隐藏。其他错误照常抛出。"""
     try:
         return await fetch()
     except ResponseCodeException as exc:
-        if exc.code == PRIVACY_CODE:
+        if exc.code in PRIVACY_CODES:
             return None
         raise
 
@@ -53,7 +55,7 @@ async def _preview(
     pick: Callable[[Any], list[str]],
     count: Callable[[Any], Any] | None = None,
 ) -> dict[str, Any]:
-    """取一个板块的预览：{"preview": [...]} / {"hidden": True} / {}（出错）。"""
+    """取一个板块的预览：{"preview": [...]} / {"hidden": True} / {"error": code}（出错）。"""
     try:
         data = await _public(fetch)
         if data is None:
@@ -65,8 +67,8 @@ async def _preview(
                 result["count"] = total
         result["preview"] = pick(data)[:PREVIEW]
         return result
-    except Exception:  # noqa: BLE001
-        return {}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": from_exception(exc).code}
 
 
 def _public_folders(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -90,8 +92,11 @@ async def resolve_mid(who: str) -> int:
 
 
 @app.command()
-def info(who: str = USER_ARG) -> None:
-    """用户资料，加上主页各板块的总览：数量和前几条预览（投稿、投币、点赞、收藏夹、追番、游戏、合集、专栏、关注…）。hidden 表示对方没公开；要看全部用 more_with 里的命令。"""
+def info(
+    who: str = USER_ARG,
+    sections: bool = typer.Option(False, "--sections", help="显式查询主页各板块的数量和预览（最多 2 个并发请求）。"),
+) -> None:
+    """用户资料；加 --sections 才查询主页总览。hidden 表示未公开，error 表示查询失败。"""
 
     async def body():
         mid = await resolve_mid(who)
@@ -103,12 +108,20 @@ def info(who: str = USER_ARG) -> None:
             up = await u.get_up_stat()  # needs login; skip quietly when anonymous
         except Exception:  # noqa: BLE001
             up = {}
-        try:
-            nav = await Api(url=NAVNUM_URL, method="GET", credential=cred).update_params(mid=mid).result
-        except Exception:  # noqa: BLE001
-            nav = {}
+        nav = {}
+        nav_error = None
+        if sections:
+            try:
+                nav = await Api(url=NAVNUM_URL, method="GET", credential=cred).update_params(mid=mid).result
+            except Exception as exc:  # noqa: BLE001
+                nav_error = from_exception(exc).code
         if output.settings.raw:
-            return {"info": data, "relation": rel, "up_stat": up, "navnum": nav}
+            raw = {"info": data, "relation": rel, "up_stat": up}
+            if sections:
+                raw["navnum"] = nav
+                if nav_error:
+                    raw["sections_error"] = {"navnum": nav_error}
+            return raw
         official = data.get("official") or {}
         live = data.get("live_room") or {}
         out: dict[str, Any] = {
@@ -127,33 +140,47 @@ def info(who: str = USER_ARG) -> None:
         if live.get("roomid"):
             out["live"] = {"live_now": live.get("liveStatus") == 1, "title": live.get("title"), "url": f"https://live.bilibili.com/{live.get('roomid')}"}
         out["videos_with"] = f"bili user videos {data.get('mid')}"
+        if not sections:
+            return out
+        if nav_error:
+            out["sections_error"] = {"navnum": nav_error}
+        semaphore = asyncio.Semaphore(SECTION_CONCURRENCY)
+
+        async def preview(
+            fetch: Callable[[], Awaitable[Any]],
+            pick: Callable[[Any], list[str]],
+            count: Callable[[Any], Any] | None = None,
+        ) -> dict[str, Any]:
+            async with semaphore:
+                return await _preview(fetch, pick, count)
+
         previews = await asyncio.gather(
-            _preview(
+            preview(
                 lambda: u.get_videos(pn=1, ps=PREVIEW),
                 lambda d: [v.get("title") or "" for v in (d.get("list") or {}).get("vlist") or []],
             ),
-            _preview(
+            preview(
                 lambda: Api(url=COIN_URL, method="GET", credential=cred).update_params(vmid=mid).result,
                 lambda d: [v.get("title") or "" for v in d or []],
             ),
-            _preview(
+            preview(
                 lambda: Api(url=LIKE_URL, method="GET", credential=cred).update_params(vmid=mid).result,
                 lambda d: [v.get("title") or "" for v in d.get("list") or []],
             ),
-            _preview(
+            preview(
                 lambda: favorite_list.get_video_favorite_list(mid, credential=cred),
                 lambda d: [f.get("title") or "" for f in _public_folders(d)],
             ),
-            _preview(
+            preview(
                 lambda: u.get_subscribed_bangumi(type_=user.BangumiType.BANGUMI, pn=1, ps=PREVIEW),
                 lambda d: [v.get("title") or "" for v in d.get("list") or []],
             ),
-            _preview(
+            preview(
                 lambda: Api(url=GAME_URL, method="GET", credential=cred).update_params(mid=mid).result,
                 lambda d: [g.get("game_name") or "" for g in d.get("list") or []],
                 count=lambda d: d.get("total_count"),
             ),
-            _preview(
+            preview(
                 lambda: u.get_channel_list(pn=1, ps=PREVIEW),
                 lambda d: [
                     (entry.get("meta") or {}).get("name") or ""
@@ -162,11 +189,11 @@ def info(who: str = USER_ARG) -> None:
                 ],
                 count=lambda d: ((d.get("items_lists") or {}).get("page") or {}).get("total"),
             ),
-            _preview(
+            preview(
                 lambda: u.get_articles(pn=1, ps=PREVIEW),
                 lambda d: [a.get("title") or "" for a in d.get("articles") or []],
             ),
-            _preview(
+            preview(
                 lambda: u.get_followings(pn=1, ps=PREVIEW),
                 lambda d: [f.get("uname") or "" for f in d.get("list") or []],
             ),
@@ -191,13 +218,13 @@ def info(who: str = USER_ARG) -> None:
             "audio": nav.get("audio"),
             "opus": nav.get("opus"),
         }
-        sections = {}
+        section_results = {}
         for name, total in counts.items():
             section = {"count": total} if total is not None else {}
             section.update(preview_by_section.get(name) or {})
             if section:
-                sections[name] = section
-        out["sections"] = sections
+                section_results[name] = section
+        out["sections"] = section_results
         out["more_with"] = f"bili user coins|favs|bangumi|likes|games|collections|articles|following|followers {mid}"
         return out
 
@@ -227,7 +254,7 @@ def videos(
     page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
     size: int = typer.Option(20, "--size", min=1, max=50, help="每页条数。"),
 ) -> None:
-    """用户的投稿列表，含播放、评论、弹幕数，适合找爆款或追某个系列。第一页会把置顶和代表作排在最前面，带 label。"""
+    """用户的投稿列表，含播放、评论、弹幕数，适合找爆款或追某个系列。items 保持接口排序和分页；第一页的置顶和代表作单列在 pinned，带 label。"""
 
     async def body():
         if order not in VIDEO_ORDERS:
@@ -251,6 +278,7 @@ def videos(
             }
             for v in (data.get("list") or {}).get("vlist") or []
         ]
+        pinned = []
         if page == 1 and not keyword:
             try:
                 top = await u.get_top_videos()
@@ -262,19 +290,18 @@ def videos(
                 mp = []
             front = ([(top, "置顶")] if top else []) + [(m, "代表作") for m in mp]
             seen = set()
-            front_items = []
             for v, label in front:
                 bvid = v.get("bvid")
                 if bvid in seen:
                     continue
                 seen.add(bvid)
-                front_items.append(_archive_card(v, label))
-            items = front_items + [v for v in items if v.get("bvid") not in seen]
+                pinned.append(_archive_card(v, label))
         return {
             "mid": mid,
             "page": page,
             "total": (data.get("page") or {}).get("count"),
             "items": items,
+            "pinned": pinned,
         }
 
     run(body)
@@ -609,9 +636,13 @@ def blocked(
     run(body)
 
 
-async def _follow_list(who: str | None, page: int, size: int, method: str, cmd: str) -> dict[str, Any]:
+async def _follow_list(who: str | None, page: int, size: int, method: str) -> dict[str, Any]:
     cred = config.require_credential()
+    own_mid = int(cred.dedeuserid) if cred.dedeuserid else None
     mid = await resolve_mid(who) if who else config.my_mid(cred)
+    is_self = mid == own_mid
+    if not is_self and page > OTHER_USER_MAX_PAGE:
+        raise BiliError("invalid_argument", "查看其他用户的关注 / 粉丝列表仅允许前 5 页。")
     data = await _public(lambda: getattr(user.User(mid, credential=cred), method)(pn=page, ps=size))
     if data is None:
         return _hidden(mid)
@@ -627,15 +658,11 @@ async def _follow_list(who: str | None, page: int, size: int, method: str, cmd: 
                 "name": f.get("uname"),
                 "sign": f.get("sign") or None,
                 "followed_at": iso_time(f.get("mtime")),
-                **({"mutual": f.get("attribute") == 6} if not who else {}),
+                **({"mutual": f.get("attribute") == 6} if is_self else {}),
             }
             for f in data.get("list") or []
         ],
     }
-    if who:
-        nw = _next_with(cmd, mid, page, size, data.get("total"), 50)
-        if nw:
-            out["next_with"] = nw
     return out
 
 
@@ -645,9 +672,9 @@ def following(
     page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
     size: int = typer.Option(50, "--size", min=1, max=50, help="每页条数。"),
 ) -> None:
-    """我关注的人（默认），或别人公开的关注列表，按关注时间从新到旧。"""
+    """我关注的人（默认），或别人公开的关注列表（仅前 5 页），按关注时间从新到旧。"""
 
-    run(lambda: _follow_list(who, page, size, "get_followings", "following"))
+    run(lambda: _follow_list(who, page, size, "get_followings"))
 
 
 @app.command()
@@ -656,6 +683,6 @@ def followers(
     page: int = typer.Option(1, "--page", min=1, help="页码，从 1 开始。"),
     size: int = typer.Option(50, "--size", min=1, max=50, help="每页条数。"),
 ) -> None:
-    """我的粉丝（默认），或别人的粉丝列表，按关注时间从新到旧。"""
+    """我的粉丝（默认），或别人公开的粉丝列表（仅前 5 页），按关注时间从新到旧。"""
 
-    run(lambda: _follow_list(who, page, size, "get_followers", "followers"))
+    run(lambda: _follow_list(who, page, size, "get_followers"))

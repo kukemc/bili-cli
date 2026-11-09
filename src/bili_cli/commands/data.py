@@ -38,6 +38,11 @@ TREND_TYPES = {"play": 1, "danmaku": 2, "comment": 3, "share": 4, "coin": 5, "fa
 
 AGE_KEYS = {"age_one": "0-16", "age_two": "16-25", "age_three": "25-40", "age_four": "40+"}
 
+# 查别人的稿件：archive 先返回 -403（访问权限不足），overview 返回 20980。
+ACCESS_DENIED_CODES = (-403, 20980)
+
+WEEKDAYS = {1: "周一", 2: "周二", 3: "周三", 4: "周四", 5: "周五", 6: "周六", 7: "周日"}
+
 
 def pct(value: Any) -> float | None:
     """Creator-center ratios are in 1/10000 (9695 -> 96.95%); some panels send them as strings."""
@@ -152,6 +157,26 @@ def _diagnose_metrics(stat: dict[str, Any]) -> dict[str, Any]:
     if better:
         out["better_than_peers_percent"] = better
     return out
+
+
+async def _own(cred: Credential, path: str, wanted: dict[str, Any]) -> dict[str, Any]:
+    """只读自己的稿件。
+
+    查别人的稿件时，`archive` 先返回 -403（访问权限不足，全局映射成 risk_control），
+    `overview` 返回 20980；两个都当 not_found 处理，否则 agent 会以为自己被风控了。
+    """
+    try:
+        return await get_data(cred, path, wanted) or {}
+    except BiliError as exc:
+        code = (exc.detail or {}).get("bili_code")
+        if code in ACCESS_DENIED_CODES:
+            raise BiliError(
+                "not_found",
+                "创作中心只能看自己的稿件，这个 ID 不在你的账号下。",
+                hint="用 `bili upload list` 找到自己的 BV 号；确认没有把别人的稿件当成自己的。",
+                detail={"bili_code": code},
+            ) from exc
+        raise
 
 
 @app.command()
@@ -345,6 +370,70 @@ def fans(
 
 
 @app.command()
+def active_hours() -> None:
+    """粉丝活跃时间：粉丝每小时（近 30 天）、每周哪天的活跃分布，以及同期大盘（同类用户）的对比。"""
+
+    async def body():
+        cred = config.require_credential()
+        mid = config.my_mid(cred)
+        # 小时曲线在「观众画像」里（v2 才带 tmid），星期分布和「最活跃时段」在活跃分析里
+        portrait = await get_data(cred, "/x/web/data/v2/fans/stat/portrayal", {"tmid": mid}) or {}
+        # 这个面板的错误不降级：风控（412）、登录过期、网络问题都必须原样抛出去，agent 才知道该停
+        idea = await get_data(cred, "/x/web/data/account_diagnose/active_fans_improve_idea") or {}
+        if output.settings.raw:
+            return {"portrayal": portrait, "improve_idea": idea}
+
+        def series(rows: list[dict[str, Any]], key: str, value: str) -> dict[Any, Any]:
+            return {row.get(key): row.get(value) or 0 for row in rows}
+
+        fans = series(portrait.get("fans_activity") or [], "hour_key", "total_inc")
+        peers = series(portrait.get("peer_fans_activity") or [], "hour_key", "total_inc")
+        hours = []
+        for hour in range(24):
+            own_percent, peer_percent = pct(fans.get(hour)), pct(peers.get(hour))
+            hours.append(
+                {
+                    "hour": hour,
+                    "fans_percent": own_percent,
+                    "peer_percent": peer_percent,
+                    "gap_percent": round(own_percent - peer_percent, 2) if own_percent is not None and peer_percent is not None else None,
+                }
+            )
+        weekdays = [
+            {"weekday": WEEKDAYS.get(row.get("period")), "fans_percent": pct(row.get("cnt"))}
+            for row in (idea.get("fans_active_week_day") or [])
+        ]
+        peak = idea.get("fans_active_period") or {}
+        peak_hour = peak.get("hour")
+        return {
+            "hours_window": "最近 30 天",
+            "hours": hours,
+            "weekdays": weekdays,
+            "top_hours": sorted((h for h in hours if h["fans_percent"]), key=lambda h: -h["fans_percent"])[:3],
+            "peak": (
+                {"weekday": WEEKDAYS.get(peak.get("day_of_week")), "hour": peak_hour, "text": f"{WEEKDAYS.get(peak.get('day_of_week'), '')} {peak_hour} 点".strip()}
+                if peak_hour is not None
+                else None
+            ),
+            "better_than_peers_percent": pct(idea.get("active_fans_pass_per")),
+            "recent_upload_slots": [
+                {"weekday": WEEKDAYS.get(row.get("day_of_week")), "hour": row.get("hour")}
+                for row in (idea.get("recent_archive_active_period") or [])
+            ],
+            "note": (
+                "百分比是 B 站返回的 1/10000 分布（24 小时合计 100%），`gap_percent` 是「你的粉丝 − 大盘」在占比上的差；"
+                "小时按 B 站口径（北京时间 UTC+8）。`hours_window` 取网页上这张图的标注（近 30 天），"
+                "星期分布和最活跃时段来自「粉丝活跃分析」，接口没标统计窗口，这里不做假设。"
+                "`recent_upload_slots` 是你最近 5 个稿件的发布时段，"
+                "`better_than_peers_percent` 是活跃粉丝表现超过多少同类 UP 主。"
+                " 这个是活跃时间；性别 / 年龄 / 地区看 `bili data audience`。"
+            ),
+        }
+
+    run(body)
+
+
+@app.command()
 def videos(
     limit: int = typer.Option(20, "--limit", min=1, max=50, help="看最近多少个稿件（1-50）。"),
     sort: str = typer.Option("date", "--sort", help="排序：date / plays / completion / fans / likes。"),
@@ -400,17 +489,18 @@ def _pick_archive(data: dict[str, Any], wanted: dict[str, Any]) -> dict[str, Any
 
 @app.command()
 def video(target: str = typer.Argument(..., help="自己的稿件：BV 号、av 号或视频链接。")) -> None:
-    """单稿数据：完播率（和 `bili upload stats` 同一个数）+ 观众画像、省份、3 秒退出率、封面点击倍数、播转粉率。"""
+    """单稿数据：完播率（和 `bili upload stats` 同一个数）+ 观众画像（性别 / 年龄 / 兴趣）、省份、3 秒退出率、封面点击倍数、播转粉率。"""
 
     async def body():
         wanted = parse_video_id(target)
         cred = config.require_credential()
-        data = await get_data(cred, "/x/web/data/archive", wanted) or {}
+        data = await _own(cred, "/x/web/data/archive", wanted)
         diagnose = await get_data(cred, "/x/web/data/archive_diagnose/compare", {"size": 30}) or {}
         survey = await get_data(cred, "/x/web/data/survey", {"type": 1}) or {}
+        portrait = await _own(cred, "/x/web/data/archive_diagnose/overview", wanted)
         item = _pick_archive(diagnose, wanted)
         if output.settings.raw:
-            return {"archive": data, "diagnose": item, "survey": survey}
+            return {"archive": data, "diagnose": item, "survey": survey, "portrait": portrait}
         stat = data.get("stat") or {}
         play = data.get("play") or {}
         group = data.get("group") or {}
@@ -437,6 +527,38 @@ def video(target: str = typer.Argument(..., help="自己的稿件：BV 号、av 
             "avg_watch_seconds": play.get("avg_duration"),
             "regions": top_items({r.get("location"): r.get("count") for r in (data.get("area") or [])}, 10),
         }
+        gender = portrait.get("gender") or {}
+        ages = portrait.get("viewer_age") or {}
+        gender_total = (gender.get("male") or 0) + (gender.get("female") or 0)
+        age_total = sum(ages.get(key) or 0 for key in AGE_KEYS)
+        out["gender_percent"] = (
+            {"male": share(gender.get("male"), gender_total), "female": share(gender.get("female"), gender_total)}
+            if gender_total
+            else None
+        )
+        out["age_percent"] = {label: share(ages.get(key), age_total) for key, label in AGE_KEYS.items()} if age_total else None
+        tags = [
+            {"name": row.get("tag_name"), "weight": row.get("count")}
+            for row in (portrait.get("viewer_ty") or [])
+            if row.get("tag_name")
+        ]
+        # 接口每次返回的顺序不同，且并列值很多；按 (-权重, 名称) 排，结果才稳定。
+        out["interests"] = sorted(tags, key=lambda row: (-(row["weight"] or 0), row["name"]))[:10]
+        top_weights = [row["weight"] for row in out["interests"]]
+        out["interests_note"] = (
+            "兴趣标签可多选，同一观众会落在多个标签里。`weight` 是 B 站返回的相对权重，单位未确认，不要当百分比读。"
+            "这个接口每次返回的先后顺序不同（数值不变），并列时这里按名称排序，所以结果是稳定的；"
+            "但并列也意味着这一段样本还区分不出主次——"
+            + (
+                f"前 10 个里有 {top_weights.count(top_weights[0])} 个并列第一（{top_weights[0]}），看不出偏好的先后。"
+                if top_weights and top_weights.count(top_weights[0]) >= 3
+                else "如果前 10 个里大量并列，说明它们之间没有主次之分。"
+            )
+        )
+        out["portrait_note"] = (
+            "性别 / 年龄的原始值是计数，不是 1/10000 占比：实测随播放量成比例放大（性别约为播放的 0.28 倍、"
+            "年龄约为 0.59 倍），所以这里只给 *_percent。地域与上面的 regions 重复，没有重复输出。"
+        )
         if item:
             out["diagnose"] = _diagnose_metrics(item.get("stat") or {})
         else:

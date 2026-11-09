@@ -203,17 +203,81 @@ def test_video_command(monkeypatch):
         "area": [{"location": "广东", "count": 36}],
     }
     diag = {"list": [{"bvid": "BV1ARHK6jEZx", "title": "t", "pubtime": 1792838129, "stat": {"interact_rate": 852, "not_ready_field": []}}]}
+    portrait = {
+        # 真实返回里 gender / viewer_age 是计数，不是 1/10000；输出只给百分比
+        "gender": {"male": 166, "female": 39},
+        "viewer_age": {"age_one": 26, "age_two": 171, "age_three": 160, "age_four": 79},
+        "viewer_area": [{"location": "广东", "count": 64}],
+        "viewer_ty": [
+            {"tag_name": "哲学", "count": 2357},
+            {"tag_name": "现象学", "count": 16500},
+            {"tag_name": "分析哲学", "count": 2357},
+        ],
+    }
     out = _invoke(
         monkeypatch,
-        {"/x/web/data/archive": archive, "/x/web/data/archive_diagnose/compare": diag, "/x/web/data/survey": {"20261024": {"arc_inc": []}}},
+        {
+            "/x/web/data/archive": archive,
+            "/x/web/data/archive_diagnose/compare": diag,
+            "/x/web/data/survey": {"20261024": {"arc_inc": []}},
+            "/x/web/data/archive_diagnose/overview": portrait,
+        },
         ["data", "video", "BV1ARHK6jEZx"],
     )
     assert out["title"] == "t" and out["data_date"] == "2026-10-24"
     assert out["audience"] == {"fan_plays": 150, "guest_plays": 122, "fan_percent": 55.15}
     assert out["completion_percent"] == 39.97 and out["avg_watch_seconds"] == 82
-    assert out["regions"] == [{"name": "广东", "count": 36}]
+    assert out["regions"] == [{"name": "广东", "count": 36}]  # 省份只出一份，画像里的 viewer_area 不重复
+    assert out["gender_percent"] == {"male": 80.98, "female": 19.02}
+    assert out["age_percent"] == {"0-16": 5.96, "16-25": 39.22, "25-40": 36.7, "40+": 18.12}
+    # 权重相同时按名称排，结果才稳定（接口每次返回顺序不同）
+    assert [row["name"] for row in out["interests"]] == ["现象学", "分析哲学", "哲学"]
+    assert out["interests"][0] == {"name": "现象学", "weight": 16500}
+    assert "单位未确认" in out["interests_note"]
+    assert "不是 1/10000 占比" in out["portrait_note"]
     assert out["diagnose"]["interaction_percent"] == 8.52
     assert "单位未确认" in out["note"]
+
+
+def test_video_of_foreign_archive_is_not_found(monkeypatch):
+    # 查别人的稿件时 archive 先返回 -403（全局映射成 risk_control），不能让它看起来像风控
+    async def fake_get(cred, path, params=None):
+        if path == "/x/web/data/archive":
+            raise BiliError("risk_control", "x", detail={"bili_code": -403})
+        return {
+            "/x/web/data/archive_diagnose/compare": {"list": []},
+            "/x/web/data/survey": {},
+            "/x/web/data/archive_diagnose/overview": {"gender": {}, "viewer_age": {}, "viewer_ty": []},
+        }.get(path)
+
+    monkeypatch.setattr(data, "get_data", fake_get)
+    monkeypatch.setattr(data.config, "require_credential", lambda: object())
+    result = CliRunner().invoke(app, ["data", "video", "BV1ARHK6jEZx"])
+    assert result.exit_code == 4
+    error = json.loads(result.output)["error"]
+    assert error["code"] == "not_found"
+    assert "只能看自己的稿件" in error["message"]
+    assert error["detail"]["bili_code"] == -403
+
+
+def test_video_portrait_of_foreign_archive_is_not_found(monkeypatch):
+    async def fake_get(cred, path, params=None):
+        if path == "/x/web/data/archive_diagnose/overview":
+            raise BiliError("api_error", "x", detail={"bili_code": 20980})
+        return {
+            "/x/web/data/archive": {"stat": {}, "group": {}, "play": {}, "area": []},
+            "/x/web/data/archive_diagnose/compare": {"list": []},
+            "/x/web/data/survey": {},
+        }.get(path)
+
+    monkeypatch.setattr(data, "get_data", fake_get)
+    monkeypatch.setattr(data.config, "require_credential", lambda: object())
+    result = CliRunner().invoke(app, ["data", "video", "BV1ARHK6jEZx"])
+    assert result.exit_code == 4
+    error = json.loads(result.output)["error"]
+    assert error["code"] == "not_found"
+    assert "只能看自己的稿件" in error["message"]
+    assert error["detail"]["bili_code"] == 20980
 
 
 def test_fans_command(monkeypatch):

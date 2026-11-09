@@ -31,6 +31,17 @@ def home() -> Path:
     return path
 
 
+def state_home() -> Path:
+    """Where small state files live: rate limits, the audit log and the seen list.
+
+    Defaults to home(). BILI_CLI_STATE_DIR can point it at a directory the
+    process may actually write to (a workspace inside a sandbox, for example)
+    while credentials stay in home().
+    """
+    env = os.environ.get("BILI_CLI_STATE_DIR")
+    return Path(env) if env else home()
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None

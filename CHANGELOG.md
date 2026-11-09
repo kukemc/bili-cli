@@ -9,10 +9,22 @@
 - `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。
 - `bili user bangumi <UID|昵称> --type bangumi|cinema`：对方公开的追番 / 追剧，`--page` / `--size` 翻页，有下一页时给 `next_with`。
 - `bili user likes`（最近点赞，最多 20 个）、`bili user games`（最近玩过的游戏）、`bili user collections`（合集和系列）、`bili user articles`（专栏文章）；没公开时同样返回 `hidden: true`。
-- `bili user following` / 新增的 `bili user followers` 可以传 UID 或昵称看别人的关注和粉丝；不传还是看自己。
-- `bili user info` 多了主页总览 `sections`：每个板块的数量（来自主页导航栏，不反映隐私设置）和前 3 条预览，对方没公开的板块标 `hidden`；`more_with` 给出看某一块全部内容的命令；`bili user videos` 第一页把置顶和代表作排在最前面，带 `label`。
-- 这些看别人的命令都需要登录。对方没公开时返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
-- 与文档的差异：`follow_status` 线上只见到 2（在看），按文档 1 想看 / 2 在看 / 3 看过映射，未知值原样保留；看别人时 `progress` 为空串，输出 null；收藏夹未公开时接口是 code 0 + data null 而不是错误码。主页各板块数量（navnum）不管隐私设置，对方关掉收藏夹后照样给数；最近玩过的游戏的接口忽略 pn / ps，旧的 lastplaygame 已 404；关注 / 粉丝 ps 超过 50 会被截成 50。
+- `bili user following` / 新增的 `bili user followers` 可以传 UID 或昵称看别人的关注和粉丝；不传还是看自己；按解析后的 UID 判断本人，查看他人仅允许前 5 页（含 `--raw`），超出返回 `invalid_argument`，不返回 `next_with`。
+- `bili user info --sections` 显式查询主页总览 `sections`：每个板块的数量（来自主页导航栏，不反映隐私设置）和前 3 条预览，对方没公开的板块标 `hidden`；`more_with` 提示各板块命令。默认 `info` 不额外查询导航与预览；预览最多 2 个并发，失败标记 `error`，导航失败见 `sections_error.navnum`；`--raw --sections` 仅附加 `navnum`。
+- `bili user videos` 的 `items` 保持接口原始排序、条数和分页，第一页的置顶和代表作单列在新增的 `pinned` 字段，带 `label`。
+- 新增的公开板块命令及关注 / 粉丝列表需要登录。对方没公开时（53013 / 22115 / 22118）返回 `hidden: true` 和空 `items`，不报错；公开但为空时 `hidden: false`。
+
+## [1.3.0] - 2026-11-04
+
+### Added
+- `bili data video` 补上观众画像：`gender_percent`、`age_percent`、`interests`（性别 / 年龄 / 兴趣标签），来自创作中心「稿件分析 › 观众画像」的 `archive_diagnose/overview`，和已有的 `archive_diagnose/compare` 同族。地域与 `regions` 重复，没有重复输出；`gender` / `viewer_age` 的原始值是计数而非 1/10000，所以只给百分比。`interests` 只给 `name` 和 `weight`：权重单位未确认，且接口返回顺序不稳定、并列值多，排序按 `(-weight, name)` 保证可复现。 由 @AlbertEWang 在 #19 贡献。
+- `bili data active-hours`：粉丝活跃时间。给 24 小时分布（网页上标「近 30 天」，`hours_window`）、星期分布、最活跃时段，以及同一时段的大盘占比（`gap_percent` 是两者的差），还有最近 5 个稿件的发布时段和活跃粉丝的同类分位。数据来自创作中心「数据中心 › 粉丝 › 活跃时段」，`bilibili-api` 没封装这两个接口（`v2/fans/stat/portrayal` 与 `account_diagnose/active_fans_improve_idea`），这里直接按网页请求实现。两个接口的错误都不降级：风控（412）、登录过期、网络问题原样抛出，agent 才知道该停下来。 由 @AlbertEWang 在 #18 贡献。
+- `BILI_CLI_STATE_DIR`：把限流记录（`ratelimit.json`）、审计日志（`audit.log`）和已看列表（`seen.json`）写到指定目录，登录凭证仍留在 `BILI_CLI_HOME`。适合沙箱、只读容器这类只能写工作区的环境。 由 @AlbertEWang 在 #13 贡献。
+
+### Fixed
+- `bili data video` 查别人的稿件时，第一个请求（`/x/web/data/archive`）返回 -403「访问权限不足」，此前被全局映射成 `risk_control`，hint 还提示「降低请求频率」，agent 会误以为自己被风控。现在 -403 与画像接口的 20980 一起按 `not_found` 处理，hint 指向 `bili upload list`。 由 @AlbertEWang 在 #19 贡献。
+- 写操作调用接口之前会先确认状态目录可写；写不了就直接报错（此时还没有副作用），hint 会提示设置 `BILI_CLI_STATE_DIR`。接口成功之后如果仍然写不进去，只往 stderr 打警告，命令保持成功——不会让 Agent 误以为没发出去而重发。 由 @AlbertEWang 在 #13 贡献。
+- `bili video coin --like`：以前只投币、不点赞，返回却显示成功。原因是 `bilibili-api` 17.4.2 的 `pay_coin()` 把参数名写成了 `like`，而 B 站接口要的是 `select_like`，于是被静默忽略。现在投币成功后会先记账、再检查实际关系并显式补赞；补赞走 `video_like` 的限流和审计，失败只在输出里加 `like_error`；最后读取关系失败也返回成功，并用 `relation_error` 标出未确认。两者都不影响已经完成的投币。 由 @AlbertEWang 在 #12 贡献。
 
 ## [1.2.1] - 2026-10-26
 

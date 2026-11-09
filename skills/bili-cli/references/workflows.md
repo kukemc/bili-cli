@@ -167,23 +167,27 @@ bili data overview --period month      # 换周期：yesterday / week / month / 
 bili data trend --type play --days 30  # 每日增量：哪天爆了、哪天掉下去（like / favorite / coin / comment / danmaku / share / charge）
 bili data audience                     # 观众画像：粉丝 vs 路人的性别、年龄、省份、兴趣标签
 bili data fans --period week           # 涨粉/取关、活跃粉丝、粉丝来源、涨粉趋势、最活跃的粉丝
+bili data active-hours                 # 粉丝活跃时间：24 小时 / 星期分布、最活跃时段、大盘对比、最近 5 个稿件的发布时段
 bili data videos --limit 20 --sort completion   # 稿件数据表：播放、点赞、评论、涨粉、完播率
-bili data video <BV>                   # 单稿：观众画像、完播率、平均观看时长、省份、3 秒退出率、封面点击倍数、播转粉率、同类分位
+bili data video <BV>                   # 单稿：性别/年龄/兴趣标签、完播率、平均观看时长、省份、3 秒退出率、封面点击倍数、播转粉率、同类分位
 bili data diagnose --size 10           # 最近 10 个稿件的诊断指标横向比
 ```
 
 和已有命令的关系（别拿同一个数字的两个版本互相比）：
 
 - `bili data overview` 的周期对比直接复用 `bili me stats` 的计算，只是额外给累计总量和昨日增量——快速看一眼用 `me stats`，要总量/昨日增量用 `data overview`。
-- `bili data video` 的完播率和 `bili upload stats` 是同一个数，额外给观众画像、省份和诊断指标。
+- `bili data video` 的完播率和 `bili upload stats` 是同一个数，额外给单稿的性别 / 年龄 / 兴趣标签、省份和诊断指标。
 
 口径（别混）：
 
 - **播放数两个口径**：`data videos` 是当前总数（接近实时），`data video` 是截至 `data_date` 的结算数，同一个稿件两者会差不少。
 - **次日结算**：`overview` 的累计与昨日增量、`video` 的互动与诊断指标都截至 `data_date`；`trend` 的每日增量与 `overview` 的昨日增量对得上。
-- **观众画像**：性别 / 年龄 / 地区由 B 站每周二更新前一周的数据；兴趣标签是另一套统计，更新周期不同，而且是**可多选的覆盖率**，`viewers_percent` 合计会超过 100%。
+- **观众画像（账号级 vs 单稿级，两套口径）**：
+  - `data audience` 是账号级：性别 / 年龄 / 地区由 B 站每周二更新前一周的数据；兴趣标签是另一套统计，**可多选的覆盖率**，`viewers_percent` 合计会超过 100%。
+  - `data video` 是单稿级：性别 / 年龄只给 `*_percent`（原始值是计数，约等于播放量的 0.28 / 0.59 倍，不是 1/10000）；兴趣标签只给 `name` 和 `weight`，**单位未确认，不要当百分比读**。这个接口每次返回顺序不同、并列值很多，命令按 `(-weight, name)` 排序保证可复现；前 10 个大量并列时说明样本还分不出主次。
 - **封面点击**：接口每次返回的绝对值会变，命令只给 `cover_click_vs_peer_median`（相对**同类稿件中位**的倍数，不是你自己稿件的）和稳定的同类分位，不要当百分比用。
 - **粉丝**：`yesterday.fans_net` 是结算值；`fans.total` 是实时值。
+- **活跃时间**：`data active-hours` 的百分比是 B 站返回的 1/10000 分布（24 小时合计 100%），小时按北京时间；`gap_percent` 是「你的粉丝 − 大盘」的占比差，正数表示这个点你的粉丝比大盘更活跃，负数表示这个点你的粉丝相对少。`better_than_peers_percent` 是活跃粉丝的同类分位。
 - **charge**：B 站原始数值，单位未确认（按电池、元、分换算都对不上），不要当金额用。
 
 复盘时值得看的组合：
