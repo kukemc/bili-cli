@@ -8,7 +8,7 @@ from bilibili_api import exceptions as bex
 
 from bili_cli.errors import BiliError, from_exception
 from bili_cli.main import _hoist_global_flags
-from bili_cli.runtime import parse_video_id, read_text
+from bili_cli.runtime import iso_time, parse_video_id, read_text
 
 
 @pytest.mark.parametrize(
@@ -65,6 +65,14 @@ def test_http_412_is_risk_control():
 def test_unknown_exception_is_internal():
     err = from_exception(ValueError("boom"))
     assert err.code == "internal_error" and err.exit_code == 1
+
+
+def test_iso_time_out_of_range_returns_none():
+    # a malformed API timestamp must not blow up display formatting
+    assert iso_time("9" * 30) is None
+    assert iso_time("-" + "9" * 30) is None
+    assert iso_time("1700000000") is not None
+    assert iso_time(0) is None
 
 
 def test_read_text(tmp_path):

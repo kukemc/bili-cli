@@ -186,7 +186,11 @@ def iso_time(ts: int | float | str | None) -> str | None:
     # some endpoints (dynamic vote cards) send timestamps as numeric strings
     if not ts or not str(ts).lstrip("-").replace(".", "", 1).isdigit() or float(ts) == 0:
         return None
-    return datetime.fromtimestamp(float(ts), CST).isoformat()
+    try:
+        return datetime.fromtimestamp(float(ts), CST).isoformat()
+    except (OverflowError, OSError, ValueError):
+        # out-of-range or otherwise unrepresentable timestamps are shown as unknown
+        return None
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
