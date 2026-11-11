@@ -156,7 +156,7 @@ def test_draft_dry_run_does_not_call_api(fake_api, tmp_path, monkeypatch):
     monkeypatch.setattr(article.output.settings, "dry_run", True, raising=False)
     body = tmp_path / "b.html"
     body.write_text("<p>hi</p>", encoding="utf-8")
-    out = run_cmd(article.draft, title="标题", file=body, content=None, category=34, cover=None, original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+    out = run_cmd(article.draft, title="标题", file=body, content=None, category=34, cover=None, original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     assert out["dry_run"] is True
     assert out["action"] == "article.draft"
     assert fake_api.calls == []
@@ -316,7 +316,7 @@ def test_draft_sends_notice_when_ai_flag_set(fake_api, tmp_path):
     fake_api.result_for = {"draft/addupdate": {"aid": 555}}
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
-    run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, ai=True, no_ai=False, ai_client="Harness", ai_model="m", ai_agent="a", cvid=None)
+    run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, reprint=False, ai=True, no_ai=False, ai_client="Harness", ai_model="m", ai_agent="a", cvid=None)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert article.AI_NOTICE_STEM in sent["content"]
 
@@ -325,7 +325,7 @@ def test_draft_omits_notice_by_default(fake_api, tmp_path):
     fake_api.result_for = {"draft/addupdate": {"aid": 556}}
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
-    run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+    run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None, original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert article.AI_NOTICE_STEM not in sent["content"]
 
@@ -494,7 +494,7 @@ def test_draft_warns_when_ai_note_missing(fake_api, tmp_path, monkeypatch):
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
     out = run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
-                  original=True, ai=True, no_ai=False, ai_client="Harness", ai_model="", ai_agent="", cvid=None)
+                  original=True, reprint=False, ai=True, no_ai=False, ai_client="Harness", ai_model="", ai_agent="", cvid=None)
     assert out["dry_run"] is True
     assert "warning" in out
     assert any("ai-model" in w for w in out["warning"])
@@ -537,7 +537,7 @@ def test_draft_new_without_ai_flag_adds_nothing(fake_api, tmp_path):
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
     run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
-            original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+            original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert article.AI_NOTICE_STEM not in sent["content"]
 
@@ -552,7 +552,7 @@ def test_draft_update_without_ai_flag_keeps_existing_notice(fake_api, tmp_path):
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
     run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
-            original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=602)
+            original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=602)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert article.AI_NOTICE_STEM in sent["content"]
 
@@ -566,7 +566,7 @@ def test_draft_update_with_no_ai_flag_removes_notice(fake_api, tmp_path):
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
     run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
-            original=True, ai=False, no_ai=True, ai_client="", ai_model="", ai_agent="", cvid=603)
+            original=True, reprint=False, ai=False, no_ai=True, ai_client="", ai_model="", ai_agent="", cvid=603)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert article.AI_NOTICE_STEM not in sent["content"]
 
@@ -602,7 +602,7 @@ def test_update_preserves_full_notice_when_no_details_given(fake_api, tmp_path):
     body = tmp_path / "b.html"
     body.write_text("<p>新正文</p>", encoding="utf-8")
     run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
-            original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=604)
+            original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=604)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert "DeepSeek V4.1 Flash" in sent["content"]
     assert "小爪（キツのめ）" in sent["content"]
@@ -686,7 +686,7 @@ def test_draft_uses_its_own_rate_limit_bucket(fake_api, tmp_path, monkeypatch):
     body.write_text("<p>x</p>", encoding="utf-8")
     fake_api.result_for = {"draft/addupdate": {"aid": 1}}
     run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
-            original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+            original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     assert seen == ["article_draft", "article_draft"]
 
 
@@ -696,7 +696,7 @@ def test_draft_keeps_both_warnings(fake_api, tmp_path, monkeypatch):
     body = tmp_path / "b.html"
     body.write_text("<p>x</p>", encoding="utf-8")
     out = run_cmd(article.draft, title="t", file=body, content=None, category=None, cover=None,
-                  original=True, ai=True, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+                  original=True, reprint=False, ai=True, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     assert isinstance(out["warning"], list)
     assert len(out["warning"]) == 2
     assert any("ai-model" in w for w in out["warning"])
@@ -737,7 +737,7 @@ def test_draft_empty_content_says_empty_not_conflict(fake_api):
     """回归：空串被 truthiness 当成「没给」，报的是「只能给一个」——指错了地方。"""
     with pytest.raises(BiliError) as ei:
         run_cmd(article.draft, title="t", file=None, content="", category=34, cover=None,
-                original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+                original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     assert "正文不能为空" in str(ei.value)
 
 
@@ -747,7 +747,7 @@ def test_draft_rejects_blank_title(fake_api, tmp_path):
     body.write_text("<p>x</p>", encoding="utf-8")
     with pytest.raises(BiliError) as ei:
         run_cmd(article.draft, title="   ", file=body, content=None, category=34, cover=None,
-                original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+                original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     assert "标题不能为空" in str(ei.value)
 
 
@@ -774,7 +774,7 @@ def test_draft_update_with_inherited_notice_does_not_warn(fake_api, tmp_path, mo
     body = tmp_path / "b.html"
     body.write_text("<p>新正文</p>", encoding="utf-8")
     out = run_cmd(article.draft, title="t", file=body, content=None, category=None, cover=None,
-                  original=True, ai=False, no_ai=False,
+                  original=True, reprint=False, ai=False, no_ai=False,
                   ai_client="", ai_model="", ai_agent="", cvid=604)
     assert out.get("warning") in (None, []), out.get("warning")
 
@@ -788,7 +788,7 @@ def test_draft_update_keeps_existing_category(fake_api, tmp_path):
     body = tmp_path / "b.html"
     body.write_text("<p>新正文</p>", encoding="utf-8")
     run_cmd(article.draft, title="t", file=body, content=None, category=None, cover=None,
-            original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=604)
+            original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=604)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert sent["category"] == 34
 
@@ -810,7 +810,7 @@ def test_draft_new_requires_title(fake_api, tmp_path):
     body.write_text("<p>x</p>", encoding="utf-8")
     with pytest.raises(BiliError) as ei:
         run_cmd(article.draft, title=None, file=body, content=None, category=34, cover=None,
-                original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
+                original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=None)
     assert "标题不能为空" in str(ei.value)
 
 
@@ -823,7 +823,7 @@ def test_draft_update_without_title_keeps_existing(fake_api, tmp_path):
     body = tmp_path / "b.html"
     body.write_text("<p>新正文</p>", encoding="utf-8")
     out = run_cmd(article.draft, title=None, file=body, content=None, category=None, cover=None,
-                  original=True, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=604)
+                  original=True, reprint=False, ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="", cvid=604)
     sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
     assert sent["title"] == "原标题"
     assert out["title"] == "原标题"
@@ -930,3 +930,291 @@ def test_drafts_empty_box_total_is_zero(fake_api):
     fake_api.result_for = {"draft/list": {"code": 0, "artlist": None}}
     out = run_cmd(article.drafts, page=1, limit=20)
     assert out["total"] == 0
+
+
+# ── 合并后作者提的六条 ────────────────────────────────────────────────────────
+
+
+def test_draft_rejects_both_orientation_flags(fake_api, tmp_path):
+    """`--original` 和 `--reprint` 同时给，不知道该信哪个。"""
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                original=True, reprint=True, ai=False, no_ai=False,
+                ai_client="", ai_model="", ai_agent="", cvid=None)
+    assert "只能给一个" in str(ei.value)
+
+
+def test_draft_update_keeps_reprint_orientation(fake_api, tmp_path):
+    """回归：更新一篇转载草稿、又不带 `--original` / `--reprint` 时，不许把它改回原创。
+
+    和上一轮的 `reprint` 是同一类问题：字段只在给了才发送，不沿用就等于清空。
+    """
+    fake_api.result_for = {
+        "draft/view": {"title": "T", "content": "<p>旧</p>", "category": {"id": 34}, "original": 0},
+        "draft/addupdate": {"aid": 604},
+    }
+    body = tmp_path / "b.html"
+    body.write_text("<p>新</p>", encoding="utf-8")
+    run_cmd(article.draft, title=None, file=body, content=None, category=None, cover=None,
+            original=False, reprint=False, ai=False, no_ai=False,
+            ai_client="", ai_model="", ai_agent="", cvid=604)
+    sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
+    assert sent["original"] == 0
+
+
+def test_draft_rejects_ai_details_without_ai_flag(fake_api, tmp_path):
+    """只给三项、不给 `--ai`，而原文又没有声明时，这几项不会补上任何东西。
+
+    静默忽略是最坏的：调用方以为自己加了声明。
+    """
+    fake_api.result_for = {
+        "draft/view": {"title": "T", "content": "<p>旧</p>", "category": {"id": 34}},
+    }
+    body = tmp_path / "b.html"
+    body.write_text("<p>新</p>", encoding="utf-8")
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.draft, title=None, file=body, content=None, category=None, cover=None,
+                original=False, reprint=False, ai=False, no_ai=False,
+                ai_client="", ai_model="deepseek-flash", ai_agent="", cvid=604)
+    assert "--ai" in str(ei.value)
+
+
+def test_delete_does_not_hide_network_errors(fake_api):
+    """两次读都失败时，只有 not_found 才算「找不到」。
+
+    未登录 / 网络错误被说成「你的账号里找不到」会误导调用方停手，而真相是「重试」。
+    """
+
+    class Boom(Exception):
+        def __init__(self, code=None):
+            self.code = code
+            super().__init__("boom")
+
+    # 文章侧：37104 会被翻成 not_found，于是继续去读草稿；
+    # 草稿侧：不是 47030，原样抛出——delete 不该把它吞成 not_found。
+    fake_api.result_for = {"article/view": Boom(37104), "draft/view": Boom(None)}
+    with pytest.raises(Boom):
+        run_cmd(article.delete, cvid=1)
+
+
+def test_delete_continues_when_article_read_returns_bare_404(fake_api):
+    """回归（本轮引入）：草稿 id 走 `article/view` 时可能返回裸 -404，不是 37104。
+
+    把 `except Exception` 收窄成 `except BiliError` 之后，这个 -404 直接穿透，
+    `delete` 对真实草稿全部失败——而且报的还是 not_found，看起来像是 id 不存在。
+    """
+
+    class ApiError(Exception):
+        def __init__(self, code):
+            self.code = code
+            super().__init__(f"code {code}")
+
+    fake_api.result_for = {
+        "article/view": ApiError(-404),
+        "draft/view": {"title": "草稿标题"},
+        "draft/delete": {},
+    }
+    out = run_cmd(article.delete, cvid=387154)
+    assert out["deleted"] is True
+    assert out["kind"] == "draft"
+
+
+def test_delete_still_raises_on_real_failures(fake_api):
+    """未登录 / 风控这类错误不许被当成「找不到」。"""
+
+    class ApiError(Exception):
+        def __init__(self, code):
+            self.code = code
+            super().__init__(f"code {code}")
+
+    fake_api.result_for = {"article/view": ApiError(-101), "draft/view": {"title": "x"}}
+    with pytest.raises(ApiError):
+        run_cmd(article.delete, cvid=1)
+
+
+def test_draft_rejects_ai_and_no_ai_together(fake_api, tmp_path):
+    """两个一起给时不知道该信哪个，别静默取一个。"""
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                original=False, reprint=False, ai=True, no_ai=True,
+                ai_client="", ai_model="", ai_agent="", cvid=None)
+    assert "只能给一个" in str(ei.value)
+
+
+def test_draft_can_change_title_without_resending_body(fake_api):
+    """只改标题时不该逼调用方重传正文——`update`（已发布）一直能这么做。"""
+    fake_api.result_for = {
+        "draft/view": {"title": "旧标题", "content": "<p>旧正文</p>", "category": {"id": 34}},
+        "draft/addupdate": {"aid": 604},
+    }
+    run_cmd(article.draft, title="新标题", file=None, content=None, category=None, cover=None,
+            original=False, reprint=False, ai=False, no_ai=False,
+            ai_client="", ai_model="", ai_agent="", cvid=604)
+    sent = [c for c in fake_api.calls if "addupdate" in c[1]][0][2]
+    assert sent["title"] == "新标题"
+    assert "旧正文" in sent["content"]
+
+
+def test_draft_dry_run_marks_reused_notice(fake_api, monkeypatch):
+    """沿用旧声明时 `ai_declares` 全是 null，读起来像「有声明但是空的」。"""
+    monkeypatch.setattr(article.output.settings, "dry_run", True, raising=False)
+    old = "<p>旧</p>\n<p>" + article.AI_NOTICE_STEM + "智能体：小爪 feat. m</p>"
+    fake_api.result_for = {"draft/view": {"title": "T", "content": old, "category": {"id": 34}}}
+    out = run_cmd(article.draft, title=None, file=None, content=None, category=None, cover=None,
+                  original=False, reprint=False, ai=False, no_ai=False,
+                  ai_client="", ai_model="", ai_agent="", cvid=604)
+    assert out["params"]["ai"] is True
+    assert out["params"]["ai_declares"]["reused"] is True
+
+
+def test_ai_details_rejected_even_when_body_has_notice(fake_api):
+    """回归（本轮引入）：原文**有**声明时，只给 `--ai-model` 会重写声明、抹掉客户端和智能体。
+
+    help 说「三项只在给了 `--ai` 时写进正文」——那它在任何情况下都该成立，
+    不能只在「原文没有声明」时成立。
+    """
+    old = "<p>旧</p>\n<p>" + article.AI_NOTICE_STEM + "客户端：A<br>模型：B<br>智能体：C</p>"
+    fake_api.result_for = {
+        "draft/view": {"title": "T", "content": old, "category": {"id": 34}},
+    }
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.draft, title=None, file=None, content=None, category=None, cover=None,
+                original=False, reprint=False, ai=False, no_ai=False,
+                ai_client="", ai_model="新模型", ai_agent="", cvid=604)
+    assert "--ai" in str(ei.value)
+    # 报错就该在写之前——不该有一次 addupdate 落下去
+    assert not any("addupdate" in c[1] for c in fake_api.calls)
+
+
+def test_show_hints_that_drafts_are_not_readable(fake_api):
+    """草稿 id 走 article/view 会 -404；提示不该叫人去查 BV 号。"""
+
+    class ApiError(Exception):
+        def __init__(self, code):
+            self.code = code
+            super().__init__(f"code {code}")
+
+    fake_api.result_for = {"article/view": ApiError(-404)}
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.show, cvid=387232, text=False)
+    assert ei.value.code == "not_found"
+    assert "草稿" in (ei.value.hint or ""), f"hint 没提草稿：{ei.value.hint!r}"
+
+
+def test_draft_reports_what_actually_landed(fake_api, tmp_path):
+    """建完草稿只看 `ok:true` 不知道 `--reprint` 有没有生效。"""
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    fake_api.result_for = {"draft/addupdate": {"aid": 604}}
+    out = run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                  original=False, reprint=True, ai=False, no_ai=False,
+                  ai_client="", ai_model="", ai_agent="", cvid=None)
+    assert out["original"] is False
+    assert out["category"] == 34
+    assert out["ai"] is False
+    # 更新时也想确认正文有没有真的换掉；返回里没有 chars 就只能再跑一次 dry-run。
+    assert out["chars"] > 0
+
+
+def test_no_ai_does_not_echo_the_fields_back(fake_api, tmp_path):
+    """`--no-ai` 时三项根本不进正文，回显它们就是撒谎。"""
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    fake_api.result_for = {"draft/addupdate": {"aid": 604}}
+    out = run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                  original=False, reprint=False, ai=False, no_ai=True,
+                  ai_client="c", ai_model="m", ai_agent="a", cvid=None)
+    assert out["ai"] is False
+    assert out["ai_declares"] == {"client": None, "model": None, "agent": None, "reused": False}
+
+
+def test_update_reports_body_length(fake_api, tmp_path):
+    """更新后要能确认正文真的换了，不该逼调用方再跑一次 dry-run。"""
+    fake_api.result_for = {
+        "article/view": {"title": "T", "content": "<p>旧</p>", "category": {"id": 34}},
+        "article/update": {"state": 0},
+    }
+    body = tmp_path / "b.html"
+    body.write_text("<p>新的正文比旧的长一些</p>", encoding="utf-8")
+    out = run_cmd(article.update, cvid=60, file=body, content=None, title=None, cover=None,
+                  ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="")
+    assert out["chars"] > 0
+    assert out["title"] == "T"
+
+
+def test_ai_warning_covers_all_three_fields(fake_api, tmp_path, monkeypatch):
+    """warning 自己也要说到 client——否则它没做到它要求别人做的事。"""
+    monkeypatch.setattr(article.output.settings, "dry_run", True, raising=False)
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    out = run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                  original=False, reprint=False, ai=True, no_ai=False,
+                  ai_client="", ai_model="", ai_agent="", cvid=None)
+    joined = " ".join(out["warning"])
+    assert "--ai-client" in joined
+    assert "--ai-model" in joined
+    assert "--ai-agent" in joined
+
+
+def test_draft_warns_when_ai_fields_look_like_placeholders(fake_api, tmp_path, monkeypatch):
+    """帮助里写的就是 `<客户端>` 这种占位符；照字面传进来不会有任何校验拦它。"""
+    monkeypatch.setattr(article.output.settings, "dry_run", True, raising=False)
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    out = run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                  original=False, reprint=False, ai=True, no_ai=False,
+                  ai_client="<客户端>", ai_model="m", ai_agent="a", cvid=None)
+    assert "占位符" in " ".join(out["warning"])
+
+
+def test_update_rejects_lone_ai_field(fake_api):
+    """`update` 不给正文时，曾经静默接受孤零零的 `--ai-model`——和 `draft` 不一致。
+
+    「三项必须配合 `--ai`」这条规矩不该因为「这次没换正文」就失效。
+    """
+    fake_api.result_for = {
+        "article/view": {"title": "T", "content": "<p>旧</p>", "category": {"id": 34}},
+    }
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.update, cvid=60, file=None, content=None, title=None, cover=None,
+                ai=False, no_ai=False, ai_client="", ai_model="lone", ai_agent="")
+    assert "--ai" in str(ei.value)
+
+
+def test_update_reports_what_landed(fake_api, tmp_path):
+    """和建草稿对齐：返回里要有分类 / 原创 / 声明开关，只看 ok:true 看不出来。"""
+    fake_api.result_for = {
+        "article/view": {"title": "T", "content": "<p>旧</p>",
+                         "category": {"id": 34}, "original": 0},
+        "article/update": {"state": 0},
+    }
+    body = tmp_path / "b.html"
+    body.write_text("<p>新</p>", encoding="utf-8")
+    out = run_cmd(article.update, cvid=60, file=body, content=None, title=None, cover=None,
+                  ai=False, no_ai=False, ai_client="", ai_model="", ai_agent="")
+    assert out["category"] == 34
+    assert out["original"] is False      # 转载沿用，没被改回原创
+    assert out["ai"] is False
+
+
+def test_draft_refuses_cvid_that_is_not_a_draft(fake_api, tmp_path):
+    """明确指定了要更新的草稿却读不到时，别让 `--cvid` 悄悄退化成别的路径。"""
+
+    class ApiError(Exception):
+        def __init__(self, code):
+            self.code = code
+            super().__init__(f"code {code}")
+
+    fake_api.result_for = {"draft/view": ApiError(47030)}
+    body = tmp_path / "b.html"
+    body.write_text("<p>x</p>", encoding="utf-8")
+    with pytest.raises(BiliError) as ei:
+        run_cmd(article.draft, title="t", file=body, content=None, category=34, cover=None,
+                original=False, reprint=False, ai=False, no_ai=False,
+                ai_client="", ai_model="", ai_agent="", cvid=999)
+    assert ei.value.code == "not_found"
+    assert "找不到草稿" in str(ei.value)

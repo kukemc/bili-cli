@@ -26,7 +26,10 @@ def test_a_stuck_command_becomes_a_network_error(monkeypatch, printed):
         runtime.run(body)
     assert time.monotonic() - t0 < 5
     err = json.loads(printed[0])["error"]
-    assert e.value.exit_code == 8 and err["code"] == "network_error" and err["detail"]["timeout"] == 0
+    # 保留原始秒数：`int()` 曾把 0.3 抹成 0，而 hint 里「0 表示不限」会让它读起来自相矛盾。
+    assert e.value.exit_code == 8 and err["code"] == "network_error"
+    assert err["detail"]["timeout"] == pytest.approx(0.3)
+    assert "0.3 秒" in err["message"]
 
 
 def test_long_jobs_can_opt_out(monkeypatch, printed):
