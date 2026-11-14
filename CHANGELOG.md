@@ -5,7 +5,13 @@
 ## [Unreleased]
 
 ### Added
-- `bili article`：专栏的建草稿 / 传图 / 发布 / 原地编辑 / 删除 / 读取，`drafts` 与 `articles` 分别列出草稿箱和已发布文章。创作中心这套接口没有 bilibili-api 封装，实现里记了几个坑：分类字段是 `category` 而不是 `category_id`、`submit` 必须一次给全 `title`+`content`+`category`+`reprint`、上传图片要 `data:` URI、编辑已发布文章要走 `article/update`（`submit` 会新建一篇）。存草稿走独立的本地限流桶（`article_draft`），不占用发布用的 `article` 桶。
+- `bili article`：专栏的建草稿 / 传图 / 发布 / 原地编辑 / 删除 / 读取，`drafts` 与 `articles` 分别列出草稿箱和已发布文章。创作中心这套接口没有 bilibili-api 封装，实现里记了几个坑：分类字段是 `category` 而不是 `category_id`、`submit` 必须一次给全 `title`+`content`+`category`+`reprint`、上传图片要 `data:` URI、编辑已发布文章要走 `article/update`（`submit` 会新建一篇）。存草稿走独立的本地限流桶（`article_draft`），不占用发布用的 `article` 桶。（#25，感谢 @Kihara777）
+
+### Fixed
+- 兼容 typer 0.29：它自带一份 click，参数对象上不再有 `.type`，`bili schema` 和 skill 的安装 / 检查都会报 `AttributeError: 'TyperOption' object has no attribute 'type'`。类型名现在改从 typer 的类型描述推出，新旧 typer 下 `bili schema` 的输出逐字一致。
+- `asr` 用云端模型时，模型 id 里的 `/` 不再被当成缓存路径的一部分。（#21，感谢 @bjstan1979）
+- `upload edit` 对不是自己的稿件直接拒绝，`--dry-run` 不再误报成功。（#22，感谢 @bjstan1979）
+- 稿件已删除时提示「已删除」，而不是评论区设置相关的错误。（#23，感谢 @bjstan1979）
 
 ## [1.3.0] - 2026-11-04
 
