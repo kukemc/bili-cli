@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import typing
 from typing import Any, Optional
 
 import typer
@@ -88,6 +89,12 @@ def _type_name(p: Any) -> str:
     if hasattr(p, "type"):
         return p.type.name
     d = p.type_descriptor
+    if d.is_list:
+        # 旧版对多值参数报的是元素类型。必须先于 is_ranged / is_path 判断：
+        # Python 3.10 里 isinstance(list[str], type) 为真，typer 的那两个判断会在 issubclass 上崩。
+        args = typing.get_args(d.annotation)
+        name = getattr(args[0], "__name__", str(args[0])) if args else "str"
+        return _TYPE_NAMES.get(name, name)
     if d.is_ranged:
         return f"{d.ranged_type_name} range"
     if d.is_path:
@@ -97,8 +104,6 @@ def _type_name(p: Any) -> str:
     if d.is_datetime:
         return "datetime"
     name = p.bare_type()
-    if d.is_list and name.startswith("list[") and name.endswith("]"):
-        name = name[5:-1]  # 旧版对多值参数报的是元素类型
     return _TYPE_NAMES.get(name, name)
 
 
