@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import typing
 from typing import Any, Optional
 
 import typer
@@ -76,6 +77,36 @@ def root(
     output.settings.wait = wait
 
 
+_TYPE_NAMES = {"bool": "boolean", "Path": "path"}
+
+
+def _type_name(p: Any) -> str:
+    """参数类型名，与 click 的 ParamType.name 保持一致（str / int / boolean / path / int range …）。
+
+    typer 0.29 起自带一份 click，参数上不再有 `.type`，改从 `type_descriptor` 推出同样的名字，
+    这样 `bili schema` 的输出不随 typer 版本变化。
+    """
+    if hasattr(p, "type"):
+        return p.type.name
+    d = p.type_descriptor
+    if d.is_list:
+        # 旧版对多值参数报的是元素类型。必须先于 is_ranged / is_path 判断：
+        # Python 3.10 里 isinstance(list[str], type) 为真，typer 的那两个判断会在 issubclass 上崩。
+        args = typing.get_args(d.annotation)
+        name = getattr(args[0], "__name__", str(args[0])) if args else "str"
+        return _TYPE_NAMES.get(name, name)
+    if d.is_ranged:
+        return f"{d.ranged_type_name} range"
+    if d.is_path:
+        return "path"
+    if d.is_choice:
+        return "choice"
+    if d.is_datetime:
+        return "datetime"
+    name = p.bare_type()
+    return _TYPE_NAMES.get(name, name)
+
+
 def _describe_params(params: list) -> list[dict[str, Any]]:
     out = []
     for p in params:
@@ -87,7 +118,7 @@ def _describe_params(params: list) -> list[dict[str, Any]]:
                 "name": p.name,
                 "kind": "argument" if is_arg else "option",
                 "flags": None if is_arg else list(p.opts) + list(p.secondary_opts),
-                "type": p.type.name,
+                "type": _type_name(p),
                 "required": p.required,
                 "default": None if callable(p.default) else p.default,
                 "help": getattr(p, "help", None),
