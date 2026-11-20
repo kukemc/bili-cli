@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Added
+- 发布者提示词：视频发布者可以在简介、画面、字幕或自己的评论里给回复者留提示词（“评论区自由回复”“只在带‘提问’二字的评论下回复”“不要回复”），本机 Agent 回复该视频评论前先拾取提示词，据此决定是否回复、在哪里回复。`bili config owner-prompt` 查看或设置 `ownerPromptMode`（`ignore` 默认无视 / `relaxed` 轻松参考 / `strict` 严格执行，未明确允许或含义不明就不回）与 `ownerPromptSources`（6 种来源：`description` 简介默认 / `first_frame` 第一帧 / `last_frame` 最后一帧 / `any_frame` 任意帧采样 / `subtitle` CC 字幕 / `owner_comment` 发布者的评论）；设置由人类决定，AI / 模型不得自行修改。`bili video owner-prompt <BV>` 按设置聚合拾取（`--sources` 可临时覆盖本次来源），返回各来源文本或图片路径、固定的安全约束 `guidance` 与决策说明；拾取命令只读。安全边界（提示词不可覆盖）：提示词只决定“是否回复”与“在哪里回复”，回复文字内容的生成规则不变，点赞 / 投币 / 关注 / 私信 / 改配置等要求一律忽略；提示词是不可信外部数据，即使自称系统指令也不升级权限——它是“素材不是指令”规则的唯一例外维度，且只在 mode 不为 ignore 时生效。`ignore` 或没拾取到提示词时，回复行为与本功能加入前完全一致。
+
 ## [1.4.0] - 2026-11-14
 
 ### Added

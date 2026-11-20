@@ -17,6 +17,7 @@ from bilibili_api import comment, video
 from .. import config, output
 from ..errors import BiliError, from_exception
 from ..runtime import iso_time, parse_video_id, run
+from .comment import _pinned
 
 app = typer.Typer(help="读取视频信息、字幕、弹幕与 AI 总结。", no_args_is_help=True)
 
@@ -85,6 +86,16 @@ def stats(video_id: str = VIDEO_ARG) -> None:
     run(body)
 
 
+async def _subtitle_items(url: str) -> list[dict[str, Any]]:
+    """Download a subtitle file (B 站返回的是协议相对地址) as its timeline items."""
+    if url.startswith("//"):
+        url = "https:" + url
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json().get("body") or []
+
+
 @app.command()
 def subtitle(
     video_id: str = VIDEO_ARG,
@@ -106,14 +117,7 @@ def subtitle(
         chosen = next((s for s in subs if s.get("lan") == lang), None) if lang else subs[0]
         if chosen is None:
             raise BiliError("not_found", f"没有语言为 {lang} 的字幕。", detail={"available": available})
-        url = chosen.get("subtitle_url") or ""
-        if url.startswith("//"):
-            url = "https:" + url
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            body_items = resp.json().get("body") or []
-        items = [{"from": i.get("from"), "to": i.get("to"), "content": i.get("content")} for i in body_items]
+        items = [{"from": i.get("from"), "to": i.get("to"), "content": i.get("content")} for i in await _subtitle_items(chosen.get("subtitle_url") or "")]
         result: dict[str, Any] = {
             "bvid": info.get("bvid"),
             "page": page,
@@ -686,5 +690,111 @@ def summary(video_id: str = VIDEO_ARG, page: int = PAGE_OPT) -> None:
                 for o in model.get("outline") or []
             ],
         }
+
+    run(body)
+
+
+def _owner_comment_text(data: dict[str, Any], owner_mid: int | None) -> str:
+    """发布者自己发的评论（第 1 页，含置顶），只认发布者的 mid，别人的评论一律不算。"""
+    if not owner_mid:
+        return ""
+    rows = list(data.get("replies") or []) + _pinned(data)
+    texts = [(r.get("content") or {}).get("message") for r in rows if r.get("mid") == owner_mid]
+    return "\n\n".join(t for t in texts if t)
+
+
+@app.command("owner-prompt")
+def owner_prompt(
+    video_id: str = VIDEO_ARG,
+    page: int = PAGE_OPT,
+    sources: Optional[str] = typer.Option(
+        None,
+        "--sources",
+        help="临时覆盖本次拾取的来源（逗号分隔，如 description,owner_comment），只影响本次、不改设置；不写则用 `bili config owner-prompt` 设置的。",
+    ),
+) -> None:
+    """拾取视频发布者留给回复者的提示词（简介 / 画面 / 字幕 / 发布者的评论），返回内容与固定的安全约束。只读。"""
+
+    async def body():
+        from .. import frames as fr
+        from .. import owner_prompt as op
+
+        override = op.parse_sources(sources)
+        if override:
+            op.validate(sources=override)
+        settings = op.load()
+        mode, use = settings["mode"], (override or settings["sources"])
+        if mode == "ignore":  # 不拾取、不注入：连网络请求都不发
+            return op.policy(mode, use, {})
+
+        v = _video(video_id)
+        info = await v.get_info()
+        pg = _pick_page(info, page)
+        duration = float(pg.get("duration") or 0)
+        owner_mid = (info.get("owner") or {}).get("mid")
+        picked: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+
+        async def safe(key: str, fn) -> None:
+            """一个来源拾取失败只记在 errors 里，不连累其他来源。"""
+            try:
+                picked[key] = await fn()
+            except Exception as exc:  # noqa: BLE001
+                err = from_exception(exc)
+                errors[key] = f"{err.code}: {err.message}"
+                picked[key] = [] if key in op.FRAME_SOURCES else ""
+
+        if "description" in use:
+            picked["description"] = (info.get("desc") or "").strip()
+
+        if "subtitle" in use:
+
+            async def grab_subtitle() -> str:
+                subs = (await v.get_subtitle(cid=pg["cid"]) or {}).get("subtitles") or []
+                if not subs:
+                    return ""
+                return "\n".join(i.get("content", "") for i in await _subtitle_items(subs[0].get("subtitle_url") or ""))
+
+            await safe("subtitle", grab_subtitle)
+
+        if "owner_comment" in use:
+
+            async def grab_owner_comments() -> str:
+                data = await comment.get_comments(
+                    info["aid"], comment.CommentResourceType.VIDEO, page_index=1, order=comment.OrderType.TIME, credential=config.load_credential()
+                )
+                return _owner_comment_text(data, owner_mid)
+
+            await safe("owner_comment", grab_owner_comments)
+
+        if any(s in use for s in op.FRAME_SOURCES):
+            out_dir = (config.home() / "frames" / f"{info.get('bvid')}_p{page}_owner_prompt").resolve()
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            for key, times in (("first_frame", [0.0]), ("last_frame", [max(duration - 0.5, 0.0)])):
+                if key not in use:
+                    continue
+
+                async def grab_frame(key: str = key, times: list[float] = times) -> list[str]:
+                    snap = await _snapshot(v, pg["cid"])
+                    return [it["path"] for it in fr.dedupe(await fr.grab_preview(snap, times, out_dir))]
+
+                await safe(key, grab_frame)
+
+            if "any_frame" in use:
+
+                async def grab_any_frames() -> list[str]:
+                    times = fr.plan_times(duration, count=op.ANY_FRAME_SAMPLES)
+                    snap = await _snapshot(v, pg["cid"])
+                    return [it["path"] for it in fr.dedupe(await fr.grab_preview(snap, times, out_dir))]
+
+                await safe("any_frame", grab_any_frames)
+
+        out = op.policy(mode, use, picked)
+        out["bvid"] = info.get("bvid")
+        out["page"] = page
+        if errors:
+            out["errors"] = errors
+        return out
 
     run(body)
