@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - older typer depends on click directly
     from click.exceptions import UsageError
 
 from . import __version__, output
-from .commands import article, asr, auth, comment, danmaku, data, dm, dynamic, feed, hot, mcp, me, owner, search, season, skills, upload, user, video
+from .commands import article, asr, auth, comment, config, danmaku, data, dm, dynamic, feed, hot, mcp, me, owner, search, season, skills, upload, user, video
 from .errors import ERROR_TABLE, BiliError
 from .runtime import run
 
@@ -33,6 +33,7 @@ app = typer.Typer(
 app.add_typer(auth.app, name="auth")
 app.add_typer(video.app, name="video")
 app.add_typer(comment.app, name="comment")
+app.add_typer(config.app, name="config")
 app.add_typer(search.app, name="search")
 app.add_typer(user.app, name="user")
 app.add_typer(feed.app, name="feed")

@@ -125,6 +125,19 @@ def save_owner(data: dict[str, Any]) -> None:
     _write_private(owner_path(), data)
 
 
+def settings_path() -> Path:
+    return home() / "settings.json"
+
+
+def load_settings() -> dict[str, Any]:
+    """User preferences (ownerPromptMode and friends) that only the human decides."""
+    return _read_json(settings_path()) or {}
+
+
+def save_settings(data: dict[str, Any]) -> None:
+    _write_private(settings_path(), data)
+
+
 def device_id() -> str:
     """A stable per-install device ID (B 站's web client generates one per browser)."""
     import uuid
