@@ -23,7 +23,7 @@ from bilibili_api.utils.network import Api
 
 from .. import config, output
 from ..errors import BiliError
-from ..runtime import WEB_HEADERS as HEADERS, run
+from ..runtime import WEB_HEADERS as HEADERS, http_client, run
 
 app = typer.Typer(help="登录、登录状态与登出。", no_args_is_help=True)
 
@@ -54,7 +54,7 @@ JNrRuoEUXpabUzGB8QIDAQAB
 
 
 async def _generate_qr() -> tuple[str, str]:
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
+    async with http_client(headers=HEADERS, timeout=15) as client:
         resp = await client.get(QR_GENERATE_URL)
         resp.raise_for_status()
         body = resp.json()
@@ -64,7 +64,7 @@ async def _generate_qr() -> tuple[str, str]:
 
 
 async def _poll_qr(key: str) -> tuple[int, Credential | None]:
-    async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
+    async with http_client(headers=HEADERS, timeout=15) as client:
         resp = await client.get(QR_POLL_URL, params={"qrcode_key": key})
         resp.raise_for_status()
         data = resp.json().get("data") or {}

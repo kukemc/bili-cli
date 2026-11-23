@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 
 from ..errors import BiliError
+from ..runtime import http_client
 from . import settings
 from .segment import Segment
 
@@ -143,7 +144,7 @@ class OpenAICompatEngine(Engine):
         self.id = f"cloud-openai-{model}"
 
     async def transcribe(self, segments: list[Segment], context: str = "") -> list[str]:
-        async with httpx.AsyncClient(timeout=120, headers={"Authorization": f"Bearer {self.api_key}"}) as client:
+        async with http_client(timeout=120, headers={"Authorization": f"Bearer {self.api_key}"}) as client:
 
             async def one(seg: Segment) -> str:
                 data = {"model": self.model, "response_format": "json"}
@@ -169,7 +170,7 @@ class AliyunEngine(Engine):
         self.id = f"cloud-aliyun-{model}"
 
     async def transcribe(self, segments: list[Segment], context: str = "") -> list[str]:
-        async with httpx.AsyncClient(timeout=120, headers={"Authorization": f"Bearer {self.api_key}"}) as client:
+        async with http_client(timeout=120, headers={"Authorization": f"Bearer {self.api_key}"}) as client:
 
             async def one(seg: Segment) -> str:
                 audio = "data:audio/wav;base64," + base64.b64encode(seg.wav_bytes()).decode()
@@ -223,7 +224,7 @@ class TencentEngine(Engine):
         }
 
     async def transcribe(self, segments: list[Segment], context: str = "") -> list[str]:
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with http_client(timeout=60) as client:
 
             async def one(seg: Segment) -> str:
                 raw = seg.wav_bytes()

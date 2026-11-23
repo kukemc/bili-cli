@@ -27,10 +27,38 @@ WEB_HEADERS = {
 }
 
 
-def web_client(cred=None, referer: str | None = None, timeout: float = 20):
-    """An httpx client that looks like the web app, optionally logged in."""
+def http_client(**kwargs: Any):
+    """Create an httpx.AsyncClient, tolerating IPv6 CIDR entries in NO_PROXY (httpx#3221)."""
     import httpx
 
+    try:
+        return httpx.AsyncClient(**kwargs)
+    except httpx.InvalidURL:
+        if kwargs.get("trust_env") is False or kwargs.get("mounts") is not None:
+            raise
+        # httpx 0.28 wraps IPv6 CIDRs in NO_PROXY as `all://[fd7a:115c:a1e0::/48]`, which
+        # URLPattern rejects with InvalidURL. Keep every valid proxy/no_proxy rule as explicit
+        # mounts and skip only the unparseable entries.
+        from httpx._utils import URLPattern, get_environment_proxies
+
+        dropped = False
+        mounts: dict[str, Any] = {}
+        for pattern, proxy_url in get_environment_proxies().items():
+            try:
+                URLPattern(pattern)
+                if proxy_url is not None:
+                    httpx.URL(proxy_url)
+            except httpx.InvalidURL:
+                dropped = True
+                continue
+            mounts[pattern] = None if proxy_url is None else httpx.AsyncHTTPTransport(proxy=proxy_url)
+        if not dropped:
+            raise
+        return httpx.AsyncClient(trust_env=False, mounts=mounts, **kwargs)
+
+
+def web_client(cred=None, referer: str | None = None, timeout: float = 20):
+    """An httpx client that looks like the web app, optionally logged in."""
     headers = dict(WEB_HEADERS)
     if referer:
         headers["Referer"] = referer
@@ -47,7 +75,7 @@ def web_client(cred=None, referer: str | None = None, timeout: float = 20):
             }.items()
             if v
         }
-    return httpx.AsyncClient(headers=headers, cookies=cookies, timeout=timeout)
+    return http_client(headers=headers, cookies=cookies, timeout=timeout)
 
 
 DEFAULT_DEADLINE = 180.0  # seconds; a read command that runs longer than this is stuck, not slow

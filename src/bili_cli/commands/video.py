@@ -16,7 +16,7 @@ from bilibili_api import comment, video
 
 from .. import config, output
 from ..errors import BiliError, from_exception
-from ..runtime import iso_time, parse_video_id, run
+from ..runtime import http_client, iso_time, parse_video_id, run
 
 app = typer.Typer(help="读取视频信息、字幕、弹幕与 AI 总结。", no_args_is_help=True)
 
@@ -109,7 +109,7 @@ def subtitle(
         url = chosen.get("subtitle_url") or ""
         if url.startswith("//"):
             url = "https:" + url
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with http_client(timeout=20) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             body_items = resp.json().get("body") or []
@@ -525,7 +525,7 @@ def watch(
             subs = (player.get("subtitle") or {}).get("subtitles") or []
             if subs:
                 url = subs[0].get("subtitle_url") or ""
-                async with httpx.AsyncClient(timeout=20) as client:
+                async with http_client(timeout=20) as client:
                     body_items = (await client.get("https:" + url if url.startswith("//") else url)).json().get("body") or []
                 text, source = "\n".join(i.get("content", "") for i in body_items), f"subtitle:{subs[0].get('lan')}"
             elif transcript == "auto":
