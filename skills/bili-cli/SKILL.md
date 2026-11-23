@@ -57,6 +57,7 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 数据中心 | `bili data overview / trend / audience / fans / active-hours / videos / video / diagnose`（累计与昨日增量、30 天趋势、观众画像、粉丝来源、粉丝活跃时间、稿件表、单稿诊断），用法和复盘套路见 [references/workflows.md](references/workflows.md) |
 | 什么时候发 | `bili data active-hours`：粉丝 24 小时 / 星期的活跃分布、最活跃时段，以及同样时段里大盘占比（`gap_percent` 正数说明这个点你的粉丝比大盘更活跃）；`recent_upload_slots` 是你最近 5 个稿件的发布时段 |
 | 研究别的 UP 主 | `bili user info <UID|昵称>`、`bili user videos <UID> --order views`（找爆款）/ `-k 系列名` |
+| 看别人主页上有什么 | 按需调用 `bili user coins / favs / bangumi / likes / games / collections / articles <UID|昵称>`；需要总览时显式用 `bili user info <UID|昵称> --sections`（各板块数量 + 前 3 条预览，最多 2 个并发请求）。`hidden: true` 表示未公开（53013 / 22115 / 22118），不要换方式重试；`error` 表示查询失败，如 `risk_control`，应停止并遵循错误处理建议；空预览表示公开但无数据。导航数量不反映隐私，失败见 `sections_error.navnum`。`--raw --sections` 仅附加原始 `navnum`，不展开预览。关注 / 粉丝用 `bili user following / followers [UID|昵称]`：看别人仅前 5 页（含 `--raw`），不返回 `next_with`，超出返回 `invalid_argument`，不要批量采集；看自己不受页数限制，按解析后的 UID 判断身份。投稿的 `items` 保持接口排序与分页，第一页置顶 / 代表作单列在 `pinned`（带 `label`）。 |
 | 看关注的人发了什么 | `bili feed timeline`（关注动态）、`--type video` 只看新投稿、`--up <UID|昵称>` 只看一个人 |
 | 关注 / 取关 | `bili user follow <UID|昵称>`、`bili user unfollow <UID|昵称>`、`bili user following`（我关注的人）；只关注用户要求的或真正想长期看的人，不要批量关注 |
 | 拉黑骚扰者 | `bili user block <UID|昵称>`、`bili user unblock`、`bili user blocked`（黑名单）；只在用户要求或明显恶意骚扰时用，拉黑前告诉用户 |
