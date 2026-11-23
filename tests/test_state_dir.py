@@ -111,3 +111,33 @@ def test_ensure_state_writable_survives_concurrency(monkeypatch, tmp_path):
 
     assert errors == []
     assert list((tmp_path / "state").iterdir()) == []
+
+
+def test_ensure_state_writable_caches_verified_dir(monkeypatch, tmp_path):
+    """Issue #30: repeated checks in the same process should not create/delete a temp file each time."""
+    state_dir = tmp_path / "cached-state"
+    monkeypatch.setenv("BILI_CLI_STATE_DIR", str(state_dir))
+    guard._VERIFIED_STATE_DIRS.clear()
+
+    calls = 0
+    real_temp = guard.tempfile.TemporaryFile
+
+    def counting_temp(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_temp(*args, **kwargs)
+
+    monkeypatch.setattr(guard.tempfile, "TemporaryFile", counting_temp)
+
+    guard._ensure_state_writable()
+    guard._ensure_state_writable()
+    guard._ensure_state_writable()
+    assert calls == 1
+
+    # If the directory disappears later, the cache does not hide the problem.
+    state_dir.rmdir()
+    state_dir.write_text("blocked", encoding="utf-8")
+    with pytest.raises(BiliError):
+        guard._ensure_state_writable()
+    assert calls == 1  # mkdir failed before creating a temp file
+

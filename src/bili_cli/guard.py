@@ -68,28 +68,38 @@ def _disabled() -> bool:
 MAX_AUTO_WAIT = 60
 
 
+_VERIFIED_STATE_DIRS: set[str] = set()
+
+
 def _ensure_state_writable() -> None:
     """Refuse to run a write when the rate-limit state cannot be saved.
 
     Checked *before* the API call: if the state dir is read-only, every write would
     silently bypass the local limits (including the 5-coins-a-day cap), which is
-    worse than failing early with an actionable hint.
+    worse than failing early with an actionable hint. Verified directories are
+    cached per process so long-lived callers (MCP server, library use) do not
+    create and delete a temp file on every check.
     """
     if _disabled():
         return
     home = config.state_home()
+    key = os.path.abspath(home)
+    if key in _VERIFIED_STATE_DIRS and home.is_dir():
+        return
     try:
         home.mkdir(parents=True, exist_ok=True)
         # A unique temp file: a fixed probe name races when several bili processes run at once.
         with tempfile.TemporaryFile(dir=home):
             pass
     except OSError as exc:
+        _VERIFIED_STATE_DIRS.discard(key)
         raise BiliError(
             "invalid_argument",
             f"无法写入状态目录 {home}：{exc}",
             hint="把 BILI_CLI_STATE_DIR 指向一个可写目录（例如工作区），或在明确接受无限流风险时设置 BILI_CLI_NO_RATE_LIMIT=1。",
             detail={"state_dir": str(home)},
         ) from exc
+    _VERIFIED_STATE_DIRS.add(key)
 
 
 def check(action: str, units: int = 1) -> None:
