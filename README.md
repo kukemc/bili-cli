@@ -193,6 +193,9 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 | `bili video watch` | 一次拿全：信息 + 标签 + AI 总结 + 全文 + 章节 + 热评 + 弹幕高能时刻 + 带弹幕反应的画面总览图；`--record` 写入历史记录 |
 | `bili video like / coin / fav / triple / relation` | 点赞、投币（必须指定个数，每天最多 5 个）、收藏、一键三连、查看我和视频的关系 |
 | `bili me favs` | 我的收藏夹 |
+| `bili me fav-videos [收藏夹]` | 收藏夹里的视频（按收藏时间从新到旧）；`--since <Unix 秒>` 只列不早于它收藏的（同一秒会重复，按 bvid 去重），适合轮询 |
+| `bili me fav-create / fav-copy / fav-move` | 新建收藏夹（默认私密）；在收藏夹之间批量复制 / 移动视频（目标里的收藏时间变成操作当下） |
+| `bili me fav-sort / fav-sort-videos` | 调整收藏夹之间的顺序；调整收藏夹里视频的顺序 |
 | `bili video frames` | 抽帧并拼总览图：默认用进度条缩略图（快、免 ffmpeg），`-q hd` 精确帧；`--danmaku` 每帧附弹幕反应，`--peaks N` 在弹幕最密集的 N 个时刻取帧 |
 | `bili video transcribe` | 语音转文字，格式同字幕，结果缓存 |
 | `bili feed inbox` | 一次看完所有新消息（读取后 B 站标为已读） |

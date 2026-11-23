@@ -71,9 +71,16 @@ bili video relation <BV>                 # 我赞了没、投了几个币、收�
 bili video like <BV>                     # 点赞；--undo 取消
 bili video fav <BV> --folder 学习         # 收藏到指定收藏夹（默认“默认收藏夹”）；--remove 取消
 bili me favs                             # 列出收藏夹
+bili me fav-videos 学习                   # 收藏夹里的视频（新→旧，每页 20）；--since <fav_time> 只列不早于它收藏的（同一秒会重复，按 bvid 去重）
+bili me fav-create MC-生电                # 新建收藏夹（默认私密）
+bili me fav-copy MC MC-生电 <BV> <BV>     # 批量复制（fav-move 移动）；目标里的收藏时间变成现在
+bili me fav-sort MC-生电 --after MC       # 收藏夹排序；--first 排到最前
+bili me fav-sort-videos 学习 <BV> --top    # 收藏夹里视频排序；--after <BV> 排到某个视频后面
 bili video coin <BV> --coins 1           # 投币：必须指定 1 或 2；每个视频最多 2 个，每天本地最多 5 个
 bili video triple <BV>                   # 一键三连（点赞 + 投币 + 收藏）
 ```
+
+整理收藏夹时先 `--dry-run`；写操作不读回确认，做完用 `bili me favs` / `fav-videos` 自己看。读收藏夹内容连续翻很多页会被风控（HTTP 412），每页之间留几秒；`fav-videos --since` 返回 `truncated` 时看 `stopped`：被风控（`risk_control`）就停下来告诉用户，不要重试；其他情况稍后再跑它给的 `next` 接着读。
 
 只对真正看过、觉得好的视频这样做。投币花的是用户的真硬币，没有授权时先问用户。UP 主不能给自己的视频投币（返回 34002）。
 
