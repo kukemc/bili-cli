@@ -94,11 +94,11 @@ def _ai_notice_text(client: str = "", model: str = "", agent: str = "") -> str:
 
     lines = [AI_NOTICE_STEM]
     if a and m:
-        lines.append(f"智能体：{a} feat. {m}")   # 有名字才用 feat.
+        lines.append(f"智能体：{a} feat. {m}")   # `feat.` needs a name in front of it
     elif a:
         lines.append(f"智能体：{a}")
     elif m:
-        lines.append(f"模型：{m}")               # 没名字就别硬套 feat.
+        lines.append(f"模型：{m}")               # no name, no `feat.`
     if c:
         lines.append(f"运行时：{c}")
     return "<br>".join(lines)
@@ -140,7 +140,7 @@ async def _post_article(path: str, cred, **data: Any) -> Any:
         if code == 20019:
             raise BiliError(
                 "api_error",
-                "刚发布/刚改过的文章有冷却，短时间不能再用相同标题提交。",
+                "刚发布 / 刚改过的文章有冷却，短时间不能再提交。",
                 hint="等几分钟再试。这是 B 站侧的冷却，不是本地限流——等它自然过期。",
                 detail={"bili_code": 20019},
             ) from exc
@@ -178,15 +178,17 @@ async def _read_article(cred, cvid: int) -> dict[str, Any]:
     try:
         return await _get("article/view", cred, aid=cvid) or {}
     except Exception as exc:
-        if getattr(exc, "code", None) == 37104:
-            # Bilibili says "no permission over someone else's column", but the usual cause
-            # is that the id is a draft id, not an article id. Echoing the original text
-            # sends people looking for a permission problem that does not exist.
+        code = getattr(exc, "code", None)
+        if code in (37104, -404, 404):
+            # 37104 is "no permission over someone else's column", but the usual cause is that
+            # the number is a draft id. A draft id can also come back as a bare -404. Either
+            # way the answer is "this is not a published article", not "check your BV number".
             raise BiliError(
                 "not_found",
                 f"{cvid} 不是一篇已发布的文章。",
-                hint="草稿要先用 `bili article publish` 发布；发布后 cvid 会变成另一个数字（publish 的返回里有两个）。",
-                detail={"bili_code": 37104},
+                hint="草稿请用 `bili article drafts` 找 id——`show` 只读已发布的文章，"
+                     "草稿正文在本地文件里，或看 `draft --cvid <id> --dry-run` 的 chars。",
+                detail={"bili_code": code},
             ) from exc
         raise
 
@@ -248,15 +250,24 @@ def _resolve_ai_notice(old_html: str, ai: bool, no_ai: bool,
     Returns `(enabled, reuse)`. Shared by `draft` and `update` so both answer the same
     question the same way: replacing the body must not silently drop the old notice.
     """
+    if ai and no_ai:
+        raise BiliError("invalid_argument", "`--ai` 和 `--no-ai` 只能给一个。")
     if no_ai:
         return False, ""
     if ai:
         return True, ""
+    # Without `--ai` the three fields must change nothing — not even when the body already
+    # carries a notice. Letting that case "rewrite with what was given" is how a caller who
+    # passed only `--ai-model` silently lost the client and agent lines.
+    if client or model or agent:
+        raise BiliError(
+            "invalid_argument",
+            "只给 --ai-client / --ai-model / --ai-agent 而不加 `--ai`，这三项不会生效。",
+            hint="要改 AI 声明请一起给 `--ai`；不给 `--ai` 时声明整段保持原样。",
+        )
     found = AI_NOTICE_RE.search(old_html or "")
     if not found:
         return False, ""
-    if client or model or agent:
-        return True, ""
     return True, found.group(0).strip()[len("<p>"):-len("</p>")].strip()
 
 
@@ -355,7 +366,10 @@ def image(
     path: Path = typer.Argument(..., help="本地图片路径（png / jpg）。"),
     caption: str = typer.Option("", "--caption", "-c", help="图注（显示在图下方）。"),
 ) -> None:
-    """上传一张正文配图，直接吐出可以粘进正文的 <figure> 片段。"""
+    """上传一张正文配图，返回可粘进正文的 <figure> 片段和图片 URL。
+
+    URL 可以直接喂给 `bili article draft --cover`。
+    """
 
     async def body():
         if not path.is_file():
@@ -381,42 +395,65 @@ def image(
 
 @app.command()
 def draft(
-    title: Optional[str] = typer.Option(None, "--title", "-t", help="标题，40 字以内；更新草稿时不给就沿用原标题。"),
-    file: Optional[Path] = typer.Option(None, "--file", "-f", help="正文 HTML 文件；`-` 表示 stdin。"),
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="标题，40 字以内。"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="正文 HTML 文件；`-` 为 stdin。"),
     content: Optional[str] = typer.Option(None, "--content", help="正文 HTML 文本（与 --file 二选一）。"),
-    category: Optional[int] = typer.Option(None, "--category", help="二级分类 ID；用 `bili article categories` 查。"),
-    cover: Optional[str] = typer.Option(None, "--cover", help="封面图 URL（用 `bili article image` 得到）。"),
-    original: bool = typer.Option(True, "--original/--reprint", help="原创还是转载。"),
+    category: Optional[int] = typer.Option(None, "--category", help="二级分类 ID（`bili article categories`）。"),
+    cover: Optional[str] = typer.Option(None, "--cover", help="封面图 URL（`bili article image`）。"),
+    # Same three-state problem as `--ai`: typer's double flag always returns a bool, so
+    # "not given" collapsed into "original=True" and updating a 转载 draft silently turned it
+    # back into 原创. Two separate flags keep "not given" distinguishable.
+    # 80 列终端会截断，所以把结论放在前半句。
+    original: bool = typer.Option(False, "--original", help="原创。"),
+    reprint: bool = typer.Option(False, "--reprint", help="转载。"),
     # `--ai/--no-ai` cannot be one flag pair: typer's double flag always returns a bool
     # (default False), so Optional[bool] never sees None and the three states collapse into
     # two. Two separate flags keep "not given" distinguishable.
-    ai: bool = typer.Option(False, "--ai", help="AI 创作声明（专栏暂无官方字段，权宜之计）。"),
-    no_ai: bool = typer.Option(False, "--no-ai", help="显式移除已有的 AI 声明。"),
-    ai_client: str = typer.Option("", "--ai-client", help="声明里的客户端，例如 `DeepSeek Harness`。"),
-    ai_model: str = typer.Option("", "--ai-model", help="声明里的模型，例如 `deepseek-flash`。"),
-    ai_agent: str = typer.Option("", "--ai-agent", help="声明里的智能体名，例如 `小爪`。"),
-    cvid: Optional[int] = typer.Option(None, "--cvid", help="给了就更新这个草稿，否则新建。"),
+    ai: bool = typer.Option(False, "--ai", help="AI 创作声明（专栏无官方字段）。"),
+    no_ai: bool = typer.Option(False, "--no-ai", help="移除已有声明。"),
+    ai_client: str = typer.Option("", "--ai-client", help="客户端名，如 <客户端>。"),
+    ai_model: str = typer.Option("", "--ai-model", help="模型名，如 <模型>。"),
+    ai_agent: str = typer.Option("", "--ai-agent", help="智能体名，如 <智能体名>。"),
+    cvid: Optional[int] = typer.Option(None, "--cvid", help="更新这个草稿；不给则新建。"),
 ) -> None:
-    """新建一个草稿（或更新已有草稿）。发布用 `bili article publish`。"""
+    """新建一个草稿，或更新已有草稿（--cvid）。
+
+    更新时，以下几处不给就沿用草稿现有的：
+    标题、正文、分类、封面、原创/转载、AI 声明。
+    新建时默认原创、无 AI 声明。
+    三项 --ai-* 必须配合 `--ai` 使用。
+    发布用 `bili article publish`。
+    """
 
     async def body():
         cred = config.require_credential()
-        raw = _read_body(file, content)
-        if not raw.strip():
-            raise BiliError("invalid_argument", "正文不能为空。")
-        # Three things have to be judged against the draft's current content, not against the
-        # new body: the title, the category and the AI notice. Each is only *sent* when given,
-        # so an update that omitted them used to clear the title and category and drop the
-        # notice. Only "the draft is gone" means "nothing to inherit" — a login or network
-        # failure must not be swallowed into "no title, no category, no notice".
         cat_id = category
         existing: dict[str, Any] = {}
-        if cvid and (title is None or cat_id is None or not (ai or no_ai)):
+        if cvid:
             try:
                 existing = await _read_draft(cred, cvid) or {}
             except BiliError as exc:
                 if exc.code != "not_found":
                     raise
+                # 明确指定了要更新的草稿却读不到：报错，别让 `--cvid` 悄悄退化成别的路径。
+                raise BiliError(
+                    "not_found",
+                    f"找不到草稿 {cvid}。",
+                    hint="cvid 可能记错了，用 `bili article drafts` 列一下；"
+                         "已经发布过的请用 `bili article update`。",
+                ) from exc
+        if file is None and content is None:
+            # Changing only the title / category / notice must not require re-sending the
+            # body: read it back from the draft. `update` (published) has always worked this
+            # way; `draft` failing with "give some body" made no sense to a caller that only
+            # wanted a new title.
+            raw = (existing.get("content") or "") if cvid else ""
+            if not raw:
+                raise BiliError("invalid_argument", "正文要写一点内容：用 `--file` 或 `--content`。")
+        else:
+            raw = _read_body(file, content)
+        if not raw.strip():
+            raise BiliError("invalid_argument", "正文不能为空。")
         old_html = existing.get("content") or ""
         if cat_id is None:
             current_cat = existing.get("category")
@@ -427,16 +464,37 @@ def draft(
             raise BiliError("invalid_argument", "标题不能为空。")
         if len(draft_title) > 40:
             raise BiliError("invalid_argument", "标题不能超过 40 字。")
+
+        if original and reprint:
+            raise BiliError("invalid_argument", "`--original` 和 `--reprint` 只能给一个。")
+        if original:
+            is_original = True
+        elif reprint:
+            is_original = False
+        elif cvid:
+            is_original = bool(existing.get("original", True))
+        else:
+            is_original = True    # new drafts are original by default
+
         enabled, reuse = _resolve_ai_notice(old_html, ai, no_ai, ai_client, ai_model, ai_agent)
         html = _apply_ai_notice(raw, enabled, ai_client, ai_model, ai_agent, reuse)
         dropped = _check_tags(html)
+        # Report what actually landed, not what was typed. With `--no-ai` (or no `--ai` at
+        # all) the three fields never reach the body, so echoing them back would be a lie.
+        declares: dict[str, Any] = {"client": None, "model": None, "agent": None, "reused": False}
+        if enabled and reuse:
+            declares["reused"] = True          # carried over verbatim from the old body
+        elif enabled:
+            declares.update(client=ai_client or None, model=ai_model or None, agent=ai_agent or None)
         params: dict[str, Any] = {
             "cvid": cvid, "title": draft_title, "category": cat_id, "cover": bool(cover),
-            "original": original, "ai": enabled, "chars": len(_plain(html)),
-            "ai_declares": {"client": ai_client or None, "model": ai_model or None, "agent": ai_agent or None},
+            "original": is_original, "ai": enabled, "chars": len(_plain(html)),
+            "ai_declares": declares,
         }
         # Warn early, and in the dry-run too: a clean rehearsal followed by a bad publish is worse.
-        missing = [f for f, v in (("--ai-model", ai_model), ("--ai-agent", ai_agent)) if not v.strip()]
+        # `--ai-client` 也是声明的一项，漏掉它等于 warning 自己没做到它要求别人做的事。
+        missing = [f for f, v in (("--ai-client", ai_client), ("--ai-model", ai_model),
+                                  ("--ai-agent", ai_agent)) if not v.strip()]
         warning = None
         # `reuse` means the old notice was carried over whole — its model and agent are right
         # there, so calling it "an empty sentence" was the warning being wrong, not the notice.
@@ -450,6 +508,13 @@ def draft(
             warnings.append(warning)
         if cat_id is None:
             warnings.append("没有分类，publish 会报 20022。用 `bili article categories` 查一个再补。")
+        # 帮助里用的就是 `<客户端>` 这种占位符；照字面传进来不会有任何校验拦它，
+        # 于是正文里会真的落下一行「客户端：<客户端>」。
+        placeholders = [f for f, v in (("--ai-client", ai_client), ("--ai-model", ai_model),
+                                       ("--ai-agent", ai_agent))
+                        if v.strip().startswith("<") and v.strip().endswith(">")]
+        if placeholders:
+            warnings.append(f"{' / '.join(placeholders)} 看起来是帮助里的占位符，不像真实值。")
 
         if output.settings.dry_run:
             out = {"dry_run": True, "action": "article.draft", "params": params, "dropped_tags": dropped}
@@ -460,7 +525,7 @@ def draft(
         # sharing the publish one — otherwise the documented `draft` → `publish` flow
         # trips the 30-second gap on its second step.
         guard.check("article_draft")
-        payload: dict[str, Any] = {"title": draft_title, "content": html, "original": 1 if original else 0}
+        payload: dict[str, Any] = {"title": draft_title, "content": html, "original": 1 if is_original else 0}
         if cvid:
             payload["aid"] = cvid
         if cat_id is not None:
@@ -475,6 +540,13 @@ def draft(
         out: dict[str, Any] = {
             "cvid": aid,
             "title": draft_title,
+            "category": cat_id,
+            # `--reprint` 有没有生效，光看 ok:true 是看不出来的——回一下实际落下来的值。
+            "original": is_original,
+            "ai": enabled,
+            "ai_declares": declares,
+            # 更新时也想确认正文有没有真的换掉；不给的话只能再跑一次 dry-run。
+            "chars": len(_plain(html)),
             "next": f"发布：`bili article publish {aid}`",
         }
         if warnings:
@@ -521,8 +593,7 @@ def publish(
             "content": html,
             "category": cat,
             # `submit` requires this field, but forcing 0 would reset a reprint (转载) article
-            # that the
-            # author set on the web; carry the draft's own value back instead.
+            # that the author set on the web; carry the draft's own value back instead.
             "reprint": int(d.get("reprint") or 0),
             "original": 1 if d.get("original", True) else 0,
         }
@@ -556,17 +627,21 @@ def publish(
 @app.command()
 def update(
     cvid: int = typer.Argument(..., help="已发布文章的 cvid。"),
-    file: Optional[Path] = typer.Option(None, "--file", "-f", help="新的正文 HTML 文件；`-` 表示 stdin。"),
-    content: Optional[str] = typer.Option(None, "--content", help="新的正文 HTML 文本。"),
-    title: Optional[str] = typer.Option(None, "--title", "-t", help="新标题；不给就沿用原标题。"),
-    cover: Optional[str] = typer.Option(None, "--cover", help="新封面 URL；不给就沿用原封面。"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="正文 HTML 文件；`-` 为 stdin。"),
+    content: Optional[str] = typer.Option(None, "--content", help="正文 HTML 文本。"),
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="新标题。"),
+    cover: Optional[str] = typer.Option(None, "--cover", help="新封面 URL。"),
     ai: bool = typer.Option(False, "--ai", help="追加 AI 创作声明。"),
-    no_ai: bool = typer.Option(False, "--no-ai", help="移除已有的 AI 声明。"),
+    no_ai: bool = typer.Option(False, "--no-ai", help="移除已有声明。"),
     ai_client: str = typer.Option("", "--ai-client", help="声明里的客户端。"),
     ai_model: str = typer.Option("", "--ai-model", help="声明里的模型。"),
     ai_agent: str = typer.Option("", "--ai-agent", help="声明里的智能体名。"),
 ) -> None:
-    """原地编辑一篇已发布的文章。会重新进审核，cvid 与动态 ID 不变。"""
+    """原地编辑一篇已发布的文章。会重新进审核，cvid 与动态 ID 不变。
+
+    标题、正文、封面、AI 声明不给就沿用现有的；三项 --ai-* 必须配合 `--ai` 使用。
+    分类与原创/转载改不了——那两项只能在草稿阶段（`bili article draft`）定。
+    """
 
     async def body():
         cred = config.require_credential()
@@ -576,8 +651,10 @@ def update(
         new_html = _read_body(file, content) if gave_body else old_html
         # A replacement body has no notice of its own, so editing without an explicit flag
         # would drop the one the old body carried. Same resolver as `draft`.
+        # 总是先解析：`--ai-*` 给了却不给 `--ai` 时要报错，不能因为「这次没换正文」就跳过
+        # 检查——那样 `update --ai-model x` 会假成功（返回 ok:true，但什么都没写）。
+        enabled, reuse = _resolve_ai_notice(old_html, ai, no_ai, ai_client, ai_model, ai_agent)
         if ai or no_ai or gave_body:
-            enabled, reuse = _resolve_ai_notice(old_html, ai, no_ai, ai_client, ai_model, ai_agent)
             new_html = _apply_ai_notice(new_html, enabled, ai_client, ai_model, ai_agent, reuse)
         if not new_html.strip():
             raise BiliError("invalid_argument", "正文不能为空。")
@@ -611,7 +688,14 @@ def update(
         guard.record("article", params, {"cvid": cvid})
         out: dict[str, Any] = {
             "cvid": cvid,
+            "title": new_title,
+            # 和建草稿那边对齐：只看 ok:true 看不出分类 / 原创 / 声明有没有被动过。
+            "category": payload.get("category"),
+            "original": bool(payload.get("original")),
+            "ai": enabled,
             "state": STATES.get((data or {}).get("state"), (data or {}).get("state")),
+            # 回一下正文长度：不然调用方只能再跑一次 dry-run 才知道内容有没有真的换掉。
+            "chars": len(_plain(new_html)),
             "next": "编辑会重新进审核；审核期间 `bili article show` 仍可读（走作者侧接口）。",
         }
         if dropped:
@@ -641,7 +725,21 @@ def delete(
         for reader, k in ((_read_article, "article"), (_read_draft, "draft")):
             try:
                 found = await reader(cred, cvid)
-            except Exception:
+            except Exception as exc:
+                # Only "there is nothing here" means keep looking. A login / risk-control /
+                # network failure must surface — reporting it as "not in your account" tells
+                # the caller to stop when the truth is "retry".
+                #
+                # The two readers answer "not yours" differently: `_read_article` maps 37104
+                # to not_found, but a draft id can also come back as a bare -404 straight
+                # from the API. Narrowing this to `except BiliError` missed the second one
+                # and made `delete` fail on real drafts while still reporting not_found.
+                code = getattr(exc, "code", None)
+                if isinstance(exc, BiliError):
+                    if exc.code != "not_found":
+                        raise
+                elif code not in (404, -404, 37104, 47030):
+                    raise
                 found = None
             if found:
                 kind = k
@@ -670,10 +768,13 @@ def delete(
 
 @app.command()
 def show(
-    cvid: int = typer.Argument(..., help="专栏 cvid。"),
+    cvid: int = typer.Argument(..., help="已发布文章的 cvid（草稿会返回 not_found）。"),
     text: bool = typer.Option(False, "--text", help="输出纯文本正文，而不是摘要。"),
 ) -> None:
-    """读一篇专栏：标题、字数、图片数、封面；`--text` 给出正文。"""
+    """读一篇专栏：标题、字数、图片数、封面；`--text` 给出正文。
+
+    只读已发布的文章；草稿会返回 not_found，草稿正文请在本地文件里看。
+    """
 
     async def body():
         cred = config.require_credential()
@@ -791,8 +892,10 @@ def watch(
 ) -> None:
     """等一篇专栏过审：轮询作者侧状态，通过/驳回/超时再返回。
 
-    状态来自 `x/article/creative/article/view` 的 `state`：-2 审核中、0 已发布、2 未通过。
-    只有 `0` 与 `2` 算终点；其余状态（含 `1` 待审核）继续等，不会误报成过审。
+    状态码来自 x/article/creative/article/view 的 state：
+      -2 审核中    0 已发布    2 未通过
+    只有 0 与 2 算终点；其余（含 1 待审核）继续等，不会误报成过审。
+    超时和请求失败都返回 ok:false，不会伪装成通过。
     """
 
     async def body():
@@ -817,8 +920,8 @@ def watch(
                 seen.append(label)
                 output.info(f"[{polls}] state={state} ({label})")
             # Only 0 (published) and 2 (rejected) are terminal. `1` is pending review (待审核)
-            # and must keep
-            # waiting: treating every non-`-2` state as done reported review as approval.
+            # and must keep waiting: treating every non-`-2` state as done reported review as
+            # approval.
             if state in (0, 2):
                 out = {
                     "cvid": cvid,
@@ -883,15 +986,15 @@ def _find_block_end(html: str, anchor: str) -> int:
 def embed(
     file: Path = typer.Argument(..., help="正文 HTML 文件。"),
     image: Path = typer.Option(..., "--image", "-i", help="要插入的图片。"),
-    after: str = typer.Option(..., "--after", "-a", help="插在这段文字所在块之后；必须原文一字不差且唯一。"),
+    after: str = typer.Option(..., "--after", "-a", help="插在这段文字所在块之后（须全文唯一）。"),
     caption: str = typer.Option("", "--caption", "-c", help="图注。"),
-    out: Optional[Path] = typer.Option(None, "--out", "-o", help="写到这个文件；不给就打印到 stdout 的 data.html。"),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="写到这个文件；默认打印到 stdout。"),
 ) -> None:
     """上传一张图，并插到正文里指定段落之后，输出新的正文。
 
-    「插在哪」由 `--after` 决定：给一段正文里**独一无二**的文字，工具找到它所在的块
-    （`<p>` / `<h1>` / `<figure>`），把图片插在那个块之后。锚点找不到或不唯一都会报错，
-    不会退而求其次塞到末尾——猜错位置比失败更糟。
+    锚点由 `--after` 决定：一段正文里独一无二、只出现一次的文字。
+    工具找到它所在的块（p / h1 / figure），把图片插在那个块之后。
+    锚点找不到或不唯一都会报错，不会退而求其次塞到末尾。
     """
 
     async def body():
@@ -900,7 +1003,7 @@ def embed(
         if not image.is_file():
             raise BiliError("invalid_argument", f"图片不存在：{image}")
         html = file.read_text(encoding="utf-8")
-        pos = _find_block_end(html, after)   # 先定位，锚点有问题就别浪费一次上传
+        pos = _find_block_end(html, after)   # locate first: a bad anchor must not cost an upload
         params = {"file": str(file), "image": str(image), "after": after}
         if output.settings.dry_run:
             return {"dry_run": True, "action": "article.embed", "params": params,

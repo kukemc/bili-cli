@@ -153,11 +153,11 @@ bili article watch <cvid>                                # 等过审
 
 **cvid 会变。** `draft` 返回的是草稿 ID；`publish` 之后文章拿到另一个 cvid。发布后草稿 ID 就作废了，拿它去 `show` / `update` / `delete` 都会失败。`show` 也只认已发布的文章。
 
-**正文是 HTML，编辑器有标签白名单。** 只保留 `p span br h1 figure img figcaption a strong blockquote ul ol li`。`<pre>` / `<code>` 会被降级，代码块的换行和空格全丢——**代码请渲染成图片再放 `<img>`**；`<hr>` 也会被丢掉（实测，分割线改用图片或留白）分类字段叫 `category`，写成 `category_id` 会被当成 `template_id` 悄悄吃掉。
+**正文是 HTML，编辑器有标签白名单。** 只保留 `p span br h1 figure img figcaption a strong blockquote ul ol li`。`<pre>` / `<code>` 会被降级，代码块的换行和空格全丢——**代码请渲染成图片再放 `<img>`**；`<hr>` 也会被丢掉（实测，分割线改用图片或留白）。分类字段叫 `category`，写成 `category_id` 会被当成 `template_id` 悄悄吃掉。
 
 **配图两种。** `image` 只上传并返回 `<figure>` 片段，位置由你拼；`embed --after` 真的把图插进正文。锚点必须是原文里**一字不差且只出现一次**的片段——找不到或出现多次都直接报错，不会退而求其次塞到末尾。图片块要和其它块同级，别套进 `<p>` 里。
 
-**AI 声明。** 专栏编辑器没有 AI 声明字段（投稿有），`--ai` 在正文末尾追加一段，幂等（先摘再加），`--no-ai` 或重跑不会堆叠。三项都要自己给：`--ai-client "DeepSeek Harness" --ai-model "deepseek-flash" --ai-agent "小爪"`，各占一行；缺 `--ai-model` / `--ai-agent` 会出警告。工具不猜你的运行时和模型——它不知道自己在哪跑。`update` 换正文时如果不带 `--ai` / `--no-ai`，会沿用原来的声明（连同里面的模型和智能体），不会悄悄丢掉。
+**AI 声明。** 专栏编辑器没有 AI 声明字段（投稿有），`--ai` 在正文末尾追加一段，幂等（先摘再加），`--no-ai` 或重跑不会堆叠。三项都要自己给：`--ai-client "<客户端>" --ai-model "<模型>" --ai-agent "<智能体名>"`，各占一行；缺 `--ai-model` / `--ai-agent` 会出警告。只给这三项而不给 `--ai` 会被拒绝——原文没有声明时，它们不会补上任何东西。工具不猜你的运行时和模型——它不知道自己在哪跑。`update` 换正文时如果不带 `--ai` / `--no-ai`，会沿用原来的声明（连同里面的模型和智能体），不会悄悄丢掉。
 
 **限流。** 发布 / 改 / 删走 `article` 桶（30 秒间隔、每小时 10 次），存草稿走 `article_draft` 桶，配图走 `article_image`（2 秒、60 次/小时）。`--wait` 只自动等 60 秒以内的限制，更长的直接返回 `rate_limited` 和 `retry_after`。
 

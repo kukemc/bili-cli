@@ -68,11 +68,13 @@ def default_deadline() -> float | None:
 
 
 def _timeout_error(deadline: float) -> BiliError:
+    # `int()` 会把 0.001 抹成 `0`，配上 hint 里那句「0 表示不限」，读起来像自相矛盾。
     return BiliError(
         "network_error",
-        f"命令超过 {int(deadline)} 秒还没完成，已中止（多半是和 B 站的连接卡住了）。",
-        hint="稍后重试即可，读操作重试是安全的。确实需要更久时，设置环境变量 BILI_CLI_TIMEOUT（秒，0 表示不限）。",
-        detail={"timeout": int(deadline)},
+        f"命令超过 {deadline:g} 秒还没完成，已中止（多半是和 B 站的连接卡住了）。",
+        hint="稍后重试即可，读操作重试是安全的。确实需要更久时，把 BILI_CLI_TIMEOUT 调大"
+             "（单位秒；显式设成 0 才表示不限）。",
+        detail={"timeout": deadline},
     )
 
 
