@@ -20,6 +20,7 @@
 - `bili article`：专栏的建草稿 / 传图 / 发布 / 原地编辑 / 删除 / 读取，`drafts` 与 `articles` 分别列出草稿箱和已发布文章。创作中心这套接口没有 bilibili-api 封装，实现里记了几个坑：分类字段是 `category` 而不是 `category_id`、`submit` 必须一次给全 `title`+`content`+`category`+`reprint`、上传图片要 `data:` URI、编辑已发布文章要走 `article/update`（`submit` 会新建一篇）。存草稿走独立的本地限流桶（`article_draft`），不占用发布用的 `article` 桶。（#25，感谢 @Kihara777）
 
 ### Fixed
+- `bili upload video` 在四条上传线路全部连不上时（例如 TLS 证书校验失败），报的是 `internal_error: TypeError: 'NoneType' object is not subscriptable`——`bilibili_api` 的测速函数在每条线路都失败时会返回 `None`（`min_cost` 和失败惩罚都是 30，`30 < 30` 不成立），随后 `self.line["os"]` 就炸了。现在先解析线路，全部不可用时直接报 `network_error`，说明"四条线路都测不通、视频还没开始上传"，hint 给出 `--line bda2` 和 `CURL_CA_BUNDLE` 两个方向；解析成功后把线路名交给上传器，不再重复测速一遍。
 - 兼容 typer 0.29：它自带一份 click，参数对象上不再有 `.type`，`bili schema` 和 skill 的安装 / 检查都会报 `AttributeError: 'TyperOption' object has no attribute 'type'`。类型名现在改从 typer 的类型描述推出，新旧 typer 下 `bili schema` 的输出逐字一致。
 - `asr` 用云端模型时，模型 id 里的 `/` 不再被当成缓存路径的一部分。（#21，感谢 @bjstan1979）
 - `upload edit` 对不是自己的稿件直接拒绝，`--dry-run` 不再误报成功。（#22，感谢 @bjstan1979）
