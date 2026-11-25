@@ -84,5 +84,5 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 - `--raw` 返回 B 站原始数据；`--dry-run` 只预览写操作；`--wait` 遇到短暂的本地限流自动等待。这些参数写在命令任意位置都行。
 - `video frames --at` 支持小数秒，如 `--at 1:30.5`；加 `--danmaku` 给每帧附弹幕反应。
 - **弹幕有时间差。** 观众看到画面后才开始打字，发出后弹幕还要在屏幕上滚六到八秒，所以屏幕上（包括人类发给你的截图里）叠着的弹幕，多半在说前几秒的镜头，不是当前画面。`watch` 和 `frames --danmaku` 已经按“发送时间 − 2 秒”把每条弹幕对齐到它反应的那一帧，以对齐结果为准；拿不准时用 `-q hd --at` 在前后各取一帧对照。总览图怎么读、怎么找高能时刻，见 [references/workflows.md](references/workflows.md) 第 3 节。
-- 没有字幕的视频：`video watch` 会在配置了转写引擎时自动转写；未配置时提示用户运行 `bili asr setup local`。
+- 没有字幕的视频：`video watch` 会在配置了转写引擎时自动转写；未配置时提示用户运行 `bili asr setup local`（纯英语非商用视频可选 `--model oruk-fourier-2b`，CC BY-NC 4.0）。
 - 命令不会无限卡住：普通命令超过 3 分钟没完成会自己中止，返回 `network_error`（`detail.timeout` 是秒数），读操作直接重试就行。投稿、转写、`dm watch` 这类长任务不受这个限制。环境变量 `BILI_CLI_TIMEOUT` 可以改上限（秒，0 表示不限）。报错的 `detail` 里有 `stalled_seconds` 时，说明是运行环境整个停住了（机器或容器被挂起、CPU 被占满），告诉用户检查环境，而不是一味重试。

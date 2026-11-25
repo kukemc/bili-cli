@@ -22,9 +22,13 @@ PROVIDERS = ("openai", "aliyun", "tencent")
 @setup_app.command("local")
 def setup_local(
     device: str = typer.Option("auto", "--device", help="auto（有 NVIDIA 显卡且显存 ≥4GB 用 GPU）/ cpu / gpu。"),
-    model: str = typer.Option("qwen3-asr", "--model", help="qwen3-asr（默认，质量最好）/ sensevoice（CPU 上快 10 倍，但无标点、错字多）。"),
+    model: str = typer.Option(
+        "qwen3-asr",
+        "--model",
+        help="qwen3-asr（默认，质量最好）/ sensevoice（CPU 上快 10 倍，但无标点、错字多）/ oruk-fourier-2b（纯英语 2B INT8，CC BY-NC 4.0 非商用，CPU）。",
+    ),
     github_proxy: str = typer.Option("", "--github-proxy", help="GitHub 下载加速前缀，国内网络慢时使用，如 https://ghfast.top/。"),
-    hf_mirror: bool = typer.Option(False, "--hf-mirror", help="GPU 版从 hf-mirror.com 下载模型（国内网络）。"),
+    hf_mirror: bool = typer.Option(False, "--hf-mirror", help="从 hf-mirror.com 下载 Hugging Face 模型（国内网络，适用于 GPU 版及 oruk-fourier-2b）。"),
 ) -> None:
     """一键部署本地转写：安装依赖、下载模型、自检。会把依赖装进当前 Python 环境。"""
 
@@ -33,8 +37,8 @@ def setup_local(
 
         if device not in ("auto", "cpu", "gpu"):
             raise BiliError("invalid_argument", "--device 只能是 auto / cpu / gpu。")
-        if model not in asr_setup.SHERPA_PACKAGES:
-            raise BiliError("invalid_argument", f"--model 只能是 {' / '.join(asr_setup.SHERPA_PACKAGES)}。")
+        if model not in asr_setup.LOCAL_MODELS:
+            raise BiliError("invalid_argument", f"--model 只能是 {' / '.join(asr_setup.LOCAL_MODELS)}。")
         dev = {"gpu": "cuda"}.get(device, device)
         if output.settings.dry_run:
             return {"dry_run": True, "action": "asr.setup.local", "plan": asr_setup.plan(dev, model)}
@@ -134,7 +138,7 @@ def status() -> None:
         if local.get("device") == "cuda":
             checks["qwen_asr"] = asr_setup._importable("qwen_asr")
         elif local:
-            checks["model_files"] = Path(local["model_dir"]).exists()
+            checks["model_files"] = asr_setup.model_files_ready(local)
         default = conf.get("default") or ("cloud" if conf.get("cloud") else "local" if local else None)
         return {
             "default": default,

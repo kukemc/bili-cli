@@ -268,7 +268,7 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 <details>
 <summary>没有字幕的视频怎么办？</summary>
 
-运行一次 `bili asr setup local`：有 NVIDIA 显卡（显存 ≥4GB）自动部署 GPU 版 Qwen3-ASR（RTX 3060 上 31 分钟视频约 2 分钟），否则部署 CPU 版（无需 PyTorch，约 0.45 倍实时）。也可以 `bili asr setup cloud` 接 OpenAI 兼容接口、阿里云百炼或腾讯云。之后 `video watch` 遇到无字幕视频会自动转写。
+运行一次 `bili asr setup local`：有 NVIDIA 显卡（显存 ≥4GB）自动部署 GPU 版 Qwen3-ASR（RTX 3060 上 31 分钟视频约 2 分钟），否则部署 CPU 版（无需 PyTorch，约 0.45 倍实时）。纯英语非商业场景也可选择 `--model oruk-fourier-2b`（[Oruk Fourier 2B](https://huggingface.co/oruk/oruk-fourier-2b) INT8，`sherpa-onnx` CPU，[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)）。也可以 `bili asr setup cloud` 接 OpenAI 兼容接口、阿里云百炼或腾讯云。之后 `video watch` 遇到无字幕视频会自动转写。
 
 </details>
 

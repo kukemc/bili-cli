@@ -64,7 +64,7 @@ class SherpaEngine(Engine):
         import sherpa_onnx as so
 
         d = self.model_dir
-        if self.model == "qwen3-asr":
+        if self.model in ("qwen3-asr", "oruk-fourier-2b"):
             return so.OfflineRecognizer.from_qwen3_asr(
                 conv_frontend=str(d / "conv_frontend.onnx"), encoder=str(d / "encoder.int8.onnx"),
                 decoder=str(d / "decoder.int8.onnx"), tokenizer=str(d / "tokenizer"), num_threads=self.threads,
