@@ -422,7 +422,10 @@ def video_(
             # same image endpoint as the main cover; the archive keeps it in a separate `cover43` field
             meta["cover43"] = await vu.upload_cover(Picture.from_file(str(cover43)), cred)
         pages = [vu.VideoUploaderPage(path=str(f), title=f.stem if len(files) > 1 else title) for f in files]
-        uploader = vu.VideoUploader(pages, meta, cred, cover=Picture.from_file(str(cover_path)), line=line_enum)
+        line_info = await _choose_line_guarded(line_enum)
+        # hand start() the resolved line, otherwise it probes all four lines a second time
+        resolved = next((vu.Lines(k) for k, v in vu.LINES_INFO.items() if v is line_info), None)
+        uploader = vu.VideoUploader(pages, meta, cred, cover=Picture.from_file(str(cover_path)), line=resolved or line_enum)
         if sys.stderr.isatty():
             _progress(uploader)
         res = await uploader.start()
@@ -585,13 +588,33 @@ async def _desc_mentions(values: list[str]) -> dict[str, int]:
     return await _mentions(values, limit=DESC_MENTIONS_MAX)
 
 
+async def _choose_line_guarded(line: vu.Lines | None) -> dict[str, Any]:
+    """Resolve the upload line, turning bilibili-api's silent None into an actionable error.
+
+    `bilibili_api.video_uploader._probe()` starts with `min_cost = 30` and uses the same 30 s as the
+    penalty for a failed line, so when *every* line fails the comparison `30 < 30` never holds and it
+    returns None. `VideoUploader.start()` then stores that None and `self.line["os"]` raises
+    `TypeError: 'NoneType' object is not subscriptable` — an `internal_error` that tells the user nothing.
+    """
+    info = await vu._choose_line(line)
+    if not info:
+        raise BiliError(
+            "network_error",
+            "四条上传线路都测不通，视频还没有开始上传。",
+            hint="先用 `--line bda2`（或 qn / ws / bldsa）指定一条再试；仍然失败多半是证书问题，"
+            "把环境变量 CURL_CA_BUNDLE 指向一个包含 GlobalSign 中间证书的 CA 包。",
+            detail={"lines": [item.value for item in vu.Lines], "step": "upload.choose_line"},
+        )
+    return info
+
+
 async def _upload_file(cred: Credential, video: Path, line: vu.Lines | None) -> dict[str, Any]:
     """Upload one video file on its own (no submit) and return its {filename, cid} for an edit payload."""
     page = vu.VideoUploaderPage(path=str(video), title=video.stem)
     uploader = vu.VideoUploader([page], {}, cred, cover=Picture(), line=line)
     if sys.stderr.isatty():
         _progress(uploader)
-    uploader.line = await vu._choose_line(line)
+    uploader.line = await _choose_line_guarded(line)
     return await uploader._upload_page(page)
 
 
