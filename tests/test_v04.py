@@ -165,3 +165,18 @@ def test_edit_keeps_staff_and_event_and_replaces_video():
     new = [{"filename": "n123", "cid": 9, "title": "t", "desc": ""}]
     assert upload_cmd.build_edit(view, {"videos": new})["videos"] == new
     assert "staffs" not in upload_cmd.build_edit(VIEW, {})
+
+
+# ---- hide in space (“在个人空间-投稿中隐藏”) ----
+
+def test_build_edit_keeps_space_hidden_and_can_flip_it():
+    # archive/view (real response, 2026-11-27): top-level space_hidden 1/2, archive.is_space_hidden 1/0
+    hidden = {**VIEW, "space_hidden": upload_cmd.SPACE_HIDDEN, "archive": {**VIEW["archive"], "is_space_hidden": 1}}
+    assert upload_cmd.is_space_hidden(hidden) is True
+    assert upload_cmd.is_space_hidden({**VIEW, "space_hidden": upload_cmd.SPACE_SHOWN}) is False
+    assert upload_cmd.is_space_hidden({**VIEW, "archive": {**VIEW["archive"], "is_space_hidden": 1}}) is True
+    assert upload_cmd.build_edit(hidden, {"title": "new"})["space_hidden"] == upload_cmd.SPACE_HIDDEN
+    assert upload_cmd.build_edit(hidden, {"hide_in_space": False})["space_hidden"] == upload_cmd.SPACE_SHOWN
+    assert upload_cmd.build_edit(VIEW, {"hide_in_space": True})["space_hidden"] == upload_cmd.SPACE_HIDDEN
+    # a view without the field: don't invent one unless asked
+    assert "space_hidden" not in upload_cmd.build_edit(VIEW, {"title": "new"})

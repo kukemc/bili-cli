@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- `bili upload video --hide-in-space`：投稿时打开网页投稿页的「在个人空间-投稿中隐藏」（提交字段 `space_hidden`，1 隐藏 / 2 显示）。稿件照常公开、能被推荐和搜到，只是不占空间的投稿栏，适合竖屏短片。`bili upload edit --hide-in-space/--show-in-space` 改已投稿件；不传时编辑会保留稿件原来的设置；`bili upload status` 多了 `hidden_in_space`。
 - `bili user coins <UID|昵称>`：对方在主页公开的最近投币（视频、投了几个币、投币时间），输出不含 IP 属地。
 - `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。
 - `bili user bangumi <UID|昵称> --type bangumi|cinema`：对方公开的追番 / 追剧，`--page` / `--size` 翻页，有下一页时给 `next_with`。
