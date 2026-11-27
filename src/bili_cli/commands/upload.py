@@ -278,7 +278,7 @@ def video_(
     private: bool = typer.Option(False, "--private", help="仅自己可见（适合测试）。"),
     hide_in_space: bool = typer.Option(
         False, "--hide-in-space",
-        help="在个人空间「投稿」列表里隐藏（网页投稿页的“在个人空间-投稿中隐藏”）：稿件照常公开、能被推荐和搜到，只是不占空间的投稿栏，适合竖屏短片之类。",
+        help="在个人空间「投稿」列表里隐藏（网页投稿页的“在个人空间-投稿中隐藏”）：稿件照常公开、能被推荐和搜到，只是不占空间的投稿栏。竖屏视频加上它，B 站会当成「动态视频」发（动态卡片带“动态视频”角标）。",
     ),
     schedule: Optional[str] = typer.Option(None, "--schedule", help="定时发布，ISO 时间（默认北京时间），需在 2 小时到 15 天之后。"),
     topic: Optional[str] = typer.Option(None, "--topic", help="投稿话题（含官方活动话题，如“AI MV 大赛”）：填话题名或话题 ID；有奖活动会自动报名。"),
