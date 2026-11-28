@@ -276,6 +276,44 @@ bili mcp install --yes      # 写入配置（先备份为 .bak，只改 bili-cli
 </details>
 
 <details>
+<summary>投稿时报 `curl: (60) unable to get local issuer certificate` 怎么办？</summary>
+
+这是证书链校验失败，不是网络问题：certifi 里没有签发方的证书。常见两种原因——部分 upos 上传边缘节点只发叶子证书；Windows 上的杀软（AVG、Kaspersky 等）开启 HTTPS 扫描后，会用自家根证书重签所有 TLS 连接。
+
+**第一步：把缺的那张证书导出成 PEM。**
+杀软的根证书在 Windows 证书库里，用 PowerShell 一条命令就能导出（按名字找，比如 AVG）：
+
+```powershell
+$cert = Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -like "*AVG*" } | Select-Object -First 1
+$pem  = "-----BEGIN CERTIFICATE-----`n" + [Convert]::ToBase64String($cert.RawData, 'InsertLineBreaks') + "`n-----END CERTIFICATE-----"
+Set-Content -Path "$env:USERPROFILE\extra-ca.pem" -Value $pem -Encoding ascii
+```
+
+macOS / Linux 上如果只是缺中间证书，从签发方下载 `.crt` 后 `openssl x509 -inform der -in x.crt -out extra-ca.pem` 转一下即可。
+
+**第二步：告诉 bili-cli 这张证书在哪。**
+
+```powershell
+# Windows PowerShell（当前会话）
+$env:BILI_CLI_CA_BUNDLE = "C:\Users\you\extra-ca.pem"
+# 持久化，之后每个新终端都生效
+setx BILI_CLI_CA_BUNDLE "C:\Users\you\extra-ca.pem"
+```
+
+```bash
+# macOS / Linux
+export BILI_CLI_CA_BUNDLE="$HOME/extra-ca.pem"
+```
+
+也可以把文件直接放到配置目录（`BILI_CLI_HOME`；Windows 默认 `%APPDATA%\bili-cli`，其他系统默认 `~/.config/bili-cli`）并命名为 `cacert-bili.pem`，启动时自动生效，不用设环境变量。
+
+**它会做什么**：把这张 PEM 和 certifi 合并成一份完整的信任库，再用 `CURL_CA_BUNDLE`（libcurl / curl_cffi）和 `SSL_CERT_FILE`（httpx）交给后面的请求；你如果已经自己设了这两个变量中的任何一个，它不会覆盖。certifi 升级或这张 PEM 更新后会自动重新合并。
+
+**校验始终开着**：这里只是补全信任库，不提供关闭校验的开关——关掉的话上传流量会暴露给中间人。
+
+</details>
+
+<details>
 <summary>多个账号怎么办？</summary>
 
 设置环境变量 `BILI_CLI_HOME` 指向不同目录，每个目录是一套独立的登录、限流和审计日志。本项目不提供批量控制多账号的功能。
