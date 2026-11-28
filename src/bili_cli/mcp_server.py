@@ -157,6 +157,39 @@ def build_server():
         _flag(args, "--dry-run", dry_run)
         return _call_with_stdin(args, text)
 
+    # ---- background uploads
+    @server.tool(
+        annotations=write,
+        description="后台投稿并立刻返回任务号（不受 MCP 调用超时影响）。参数与 upload video 相同，"
+        "额外支持 lines（如 \"ws,qn,bldsa\"）、probe=true（只传不提交）。之后用 upload_job 查进度。",
+    )
+    def upload_start(
+        file: str,
+        title: str,
+        tag: list[str],
+        desc: str = "",
+        lines: str = "ws,qn,bldsa",
+        zone: int | None = None,
+        private: bool = False,
+        probe: bool = False,
+        force: bool = False,
+    ) -> dict:
+        args = ["upload", "video", file, "--title", title, "--background", "--lines", lines]
+        _flag(args, "--tag", tag)
+        _flag(args, "--desc", desc or None)
+        _flag(args, "--zone", zone)
+        _flag(args, "--private", private)
+        _flag(args, "--probe", probe)
+        _flag(args, "--force", force)
+        return call(args, timeout=120)
+
+    @server.tool(
+        annotations=read,
+        description="查看后台上传任务：状态、当前线路与节点 IP、已完成分片、是否已提交、bvid。",
+    )
+    def upload_job(job_id: str) -> dict:
+        return call(["upload", "job", job_id], timeout=60)
+
     # ---- everything else
     @server.tool(
         annotations=write,

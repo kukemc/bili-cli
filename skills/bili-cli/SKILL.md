@@ -51,6 +51,9 @@ bili auth status          # 已登录 → 继续；not_logged_in → 走下面�
 | 等专栏过审 | `bili article watch <cvid>` 轮询作者侧 `state`（-2 审核中 / 0 已发布 / 2 未通过；`1` 待审核会继续等），不用等私信 |
 | 私信自动回复（B 站自带，需 1000 粉） | `bili dm autoreply show`；改之前必须先给用户看 `--dry-run` 并得到同意 |
 | 投稿 | `bili upload video a.mp4 --title … --tag …`（默认带“含AI生成内容”声明；`--topic` 话题 / 活动、`--schedule` 定时 + `--reserve` 预约、`--season` 进合集、`--staff "策划:UID"` 联合投稿） |
+| 长视频投稿（怕调用超时 / 怕卡住） | 加 `--background`：立刻返回任务号，传完才提交；`bili upload job <id>` 查线路、节点 IP、分片进度、bvid。线路默认 `ws → qn → bldsa`（`--lines` 可改），`--stall-timeout` 秒没有分片就换线 |
+| 测线路能不能用（不产生稿件） | `bili upload video a.mp4 --title t --tag t --probe --lines ws`：只上传不提交 |
+| 给已有稿件补标签（保留活动话题） | `bili upload edit <BV> --add-tag 新标签`；`--tag` 仍是整体替换 |
 | 改已投稿件的标题 / 简介 / 标签 / 封面 | `bili upload edit <BV> --title …`（会重新审核，先给用户看 `--dry-run`） |
 | 换源：用新视频文件替换已投稿件（单 P） | `bili upload edit <BV> --video new.mp4`（重新审核，联合投稿成员和活动保留） |
 | 简介里 @ 人（投稿或改稿） | `--desc "角色设计 @冬冰 " --desc-at 冬冰` |
