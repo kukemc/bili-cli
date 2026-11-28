@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- 支持额外的 CA 证书：设 `BILI_CLI_CA_BUNDLE` 指向一个 PEM（或把 `cacert-bili.pem` 放进配置目录 `config.home()`），bili-cli 启动时把它和 certifi 合并成一份，再交给 libcurl（`CURL_CA_BUNDLE`）和 httpx（`SSL_CERT_FILE`），证书校验保持开启。合并文件在配置目录里，certifi 升级或那张 PEM 更新后会自动重新合并；用户自己设过的变量不会被覆盖。用于 certifi 补不全证书链的场景：部分 upos 上传边缘节点只发叶子证书，Windows 上杀软（AVG / Kaspersky 等）的 HTTPS 扫描会用自己的根证书重签——这两种都会让 `upload` 报 `curl: (60) unable to get local issuer certificate`，现在这个错误也会在 hint 里提示这个开关。
 - `bili upload video --hide-in-space`：投稿时打开网页投稿页的「在个人空间-投稿中隐藏」（提交字段 `space_hidden`，1 隐藏 / 2 显示）。稿件照常公开、能被推荐和搜到，只是不占空间的投稿栏。竖屏视频加上它就是 B 站的「动态视频」（动态里显示“发布了动态视频”、卡片带“动态视频”角标），网页端没有单独发动态视频的入口，用这个就行。`bili upload edit --hide-in-space/--show-in-space` 改已投稿件；不传时编辑会保留稿件原来的设置；`bili upload status` 多了 `hidden_in_space`。
 - `bili user coins <UID|昵称>`：对方在主页公开的最近投币（视频、投了几个币、投币时间），输出不含 IP 属地。
 - `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。

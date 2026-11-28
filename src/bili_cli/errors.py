@@ -127,6 +127,18 @@ def from_exception(exc: BaseException) -> BiliError:
         return BiliError("risk_control", "请求被 B 站风控拦截（HTTP 412）。", detail={"url": str(exc.request.url.copy_with(query=None))})
     # curl_cffi (used by bilibili-api) raises its own Timeout / ConnectionError types
     if isinstance(exc, (httpx.HTTPError, ConnectionError, TimeoutError)) or type(exc).__module__.startswith("curl_cffi"):
-        return BiliError("network_error", f"{type(exc).__name__}: {exc}")
+        message = f"{type(exc).__name__}: {exc}"
+        lowered = message.lower()
+        if "certificate" in lowered or "curl: (60)" in lowered or "ssl" in lowered:
+            return BiliError(
+                "network_error",
+                message,
+                hint=(
+                    "证书校验失败：这台机器上可能有杀软在扫描 HTTPS，或者这条线路只下发了叶子证书。"
+                    "把缺的证书导出成 PEM，设 BILI_CLI_CA_BUNDLE 指向它（bili-cli 会和 certifi 合并，校验不会被关闭），"
+                    "详见 README 的「常见问题」。不要用关闭校验的方式绕开。"
+                ),
+            )
+        return BiliError("network_error", message)
 
     return BiliError("internal_error", f"{type(exc).__name__}: {exc}")
