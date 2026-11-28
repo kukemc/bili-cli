@@ -23,7 +23,7 @@ from bilibili_api import creative_center as cc
 from bilibili_api import video_uploader as vu
 from bilibili_api.utils.network import Api
 
-from .. import config, guard, output
+from .. import config, guard, output, upload_jobs, upload_lines
 from ..errors import BiliError
 from ..runtime import CST, iso_time, parse_timestamp, read_text, run, web_client
 
@@ -255,6 +255,63 @@ def _progress(uploader: vu.VideoUploader) -> None:
     uploader.add_event_listener(vu.VideoUploaderEvents.PRE_SUBMIT.value, lambda d: output.info("正在提交稿件…"))
 
 
+def _job_patch(job: dict[str, Any] | None, **fields: Any) -> None:
+    """Refresh the job file; a foreground run has no job and just skips this."""
+    if not job:
+        return
+    job.update({key: value for key, value in fields.items() if value is not None})
+    job["updated_at"] = time.time()
+    try:
+        upload_jobs.write(job)
+    except OSError:
+        pass
+
+
+async def _upload_pages_on_line(uploader, pages, stall_timeout: float, on_progress) -> list[dict[str, Any]]:
+    """Upload every page on the current line; only returns once all of them are stored."""
+    videos = []
+    for page in pages:
+        data = await upload_lines.upload_page_watched(uploader, page, stall_timeout, on_progress)
+        videos.append(
+            {"title": page.title, "desc": page.description, "filename": data["filename"], "cid": data["cid"]}
+        )
+    return videos
+
+
+def _spawn_background(argv: list[str], plan: list[str], title: str) -> dict[str, Any]:
+    """Re-exec without --background, detached, and return the job id immediately.
+
+    A detached child survives the caller: MCP timeouts, `mcp serve` restarts, and the terminal going away.
+    """
+    job_id = upload_jobs.new_id()
+    log_path = upload_jobs.jobs_dir() / f"{job_id}.log"
+    child_argv = [arg for arg in argv if arg != "--background" and not arg.startswith("--background=")]
+    cmd = [sys.executable, "-m", "bili_cli.main", *child_argv, "--job-id", job_id]
+    job: dict[str, Any] = {
+        "id": job_id,
+        "status": "queued",
+        "title": title,
+        "lines": plan,
+        "argv": child_argv,
+        "pid": None,
+        "created_at": time.time(),
+        "updated_at": time.time(),
+        "submitted": False,
+        "log": str(log_path),
+    }
+    upload_jobs.write(job)
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    with open(log_path, "ab") as log:
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, creationflags=flags, close_fds=True
+        )
+    job["pid"] = proc.pid
+    upload_jobs.write(job)
+    return {"job_id": job_id, "status": "queued", "log": str(log_path), "next": f"bili upload job {job_id}"}
+
+
 @app.command("video")
 def video_(
     files: list[Path] = typer.Argument(..., help="视频文件；传多个即为多 P，按顺序排列。"),
@@ -289,7 +346,14 @@ def video_(
     no_reprint: bool = typer.Option(False, "--no-reprint", help="声明未经授权禁止转载。"),
     close_comments: bool = typer.Option(False, "--close-comments", help="关闭评论。"),
     close_danmaku: bool = typer.Option(False, "--close-danmaku", help="关闭弹幕。"),
-    line: Optional[str] = typer.Option(None, "--line", help="上传线路：bda2 / qn / ws / bldsa；不传则自动测速。"),
+    line: Optional[str] = typer.Option(None, "--line", help="只走这一条上传线路：bda2 / qn / ws / bldsa。"),
+    lines: Optional[str] = typer.Option(None, "--lines", help="按顺序尝试的线路，逗号分隔；默认 ws,qn,bldsa（bda2 不在默认里）。"),
+    stall_timeout: int = typer.Option(60, "--stall-timeout", min=10, help="连续这么多秒没有分片完成就换下一条线路。"),
+    total_timeout: int = typer.Option(0, "--total-timeout", min=0, help="整个上传的总超时（秒）；0 表示不限。"),
+    background: bool = typer.Option(False, "--background", help="后台执行并立刻返回任务 ID，用 `bili upload job <id>` 查进度。"),
+    force: bool = typer.Option(False, "--force", help="忽略“同一文件 + 同一标题已投过 / 正在投”的检查。"),
+    probe: bool = typer.Option(False, "--probe", help="只上传不提交：跑完线路和分片就停，不会产生稿件。"),
+    job_id: Optional[str] = typer.Option(None, "--job-id", hidden=True, help="内部使用：后台子进程的任务 ID。"),
 ) -> None:
     """上传视频并投稿。默认勾选“含AI生成内容”声明。上传可能耗时较久，进度输出在 stderr。"""
 
@@ -321,6 +385,7 @@ def video_(
                 raise BiliError("invalid_argument", "--line 只能是 bda2 / qn / ws / bldsa。") from exc
         dtime = _parse_schedule(schedule)
         topic_info = await find_topic(cred, topic) if topic else None
+        plan = upload_lines.parse_line_plan(lines, line)
         if reserve and not dtime:
             raise BiliError("invalid_argument", "--reserve 需要配合 --schedule 定时发布使用。")
         staff_items = parse_staff(staff)
@@ -415,6 +480,20 @@ def video_(
         if output.settings.dry_run:
             return {"dry_run": True, "action": "upload.video", "params": summary, "meta": meta}
 
+        if not force:
+            conflict = upload_jobs.find_conflict(upload_jobs.fingerprint(list(files), title), force=False)
+            if conflict:
+                job = conflict["job"]
+                raise BiliError(
+                    "invalid_argument",
+                    f"这个文件 + 标题已经在投/刚投过：{job.get('id')}（{job.get('status')}）。",
+                    hint=f"用 `bili upload job {job.get('id')}` 看它，确认要再投一次就加 --force。",
+                    detail={"job_id": job.get("id"), "reason": conflict["reason"]},
+                )
+
+        if background and job_id is None:
+            return _spawn_background(sys.argv[1:], plan, title)
+
         guard.check("upload")
         await _preflight(cred, files[0])
         cover_path = cover or _extract_cover(files[0])
@@ -422,13 +501,66 @@ def video_(
             # same image endpoint as the main cover; the archive keeps it in a separate `cover43` field
             meta["cover43"] = await vu.upload_cover(Picture.from_file(str(cover43)), cred)
         pages = [vu.VideoUploaderPage(path=str(f), title=f.stem if len(files) > 1 else title) for f in files]
-        line_info = await _choose_line_guarded(line_enum)
-        # hand start() the resolved line, otherwise it probes all four lines a second time
-        resolved = next((vu.Lines(k) for k, v in vu.LINES_INFO.items() if v is line_info), None)
-        uploader = vu.VideoUploader(pages, meta, cred, cover=Picture.from_file(str(cover_path)), line=resolved or line_enum)
+        uploader = vu.VideoUploader(pages, meta, cred, cover=Picture.from_file(str(cover_path)))
         if sys.stderr.isatty():
             _progress(uploader)
-        res = await uploader.start()
+
+        job = None
+        if job_id:
+            try:
+                job = upload_jobs.read(job_id)
+            except FileNotFoundError:
+                job = None
+        upload_jobs.acquire_lock(job_id or "foreground")
+        try:
+            # the line's probe host is not the node that serves the bytes; preupload names it,
+            # so wrap it once to log the real host/IP into the job file
+            net: dict[str, str | None] = {}
+            original_preupload = uploader._preupload
+
+            async def _preupload_tracked(page):
+                data = await original_preupload(page)
+                host = upload_lines.host_from_endpoint(str((data or {}).get("endpoint") or ""))
+                if host:
+                    net["host"] = host
+                    net["ip"] = upload_lines.resolve_host_ip(host)
+                    _job_patch(job, host=host, ip=net["ip"])
+                return data
+
+            uploader._preupload = _preupload_tracked  # type: ignore[method-assign]
+            attempts = upload_lines.attempts_for(plan)
+            videos = None
+            last_error: Exception | None = None
+            for index, line_name in enumerate(attempts, start=1):
+                uploader.line = vu.LINES_INFO[line_name]
+                ip = upload_lines.resolve_line_ip(line_name)
+                _job_patch(job, status="uploading", attempt=index, line=line_name, ip=ip, chunks=0)
+                try:
+                    videos = await _upload_pages_on_line(uploader, pages, stall_timeout, lambda n: _job_patch(job, chunks=n))
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    _job_patch(job, last_error=f"{line_name}: {type(exc).__name__}: {exc}"[:400])
+                    if not upload_lines.is_line_error(exc):
+                        raise
+            if videos is None:
+                raise BiliError(
+                    "network_error",
+                    f"线路都失败了（{' → '.join(attempts)}），没有产生稿件。",
+                    hint="换一批线路再试，例如 --lines qn,ws；证书错误请参考 README 的 CURL_CA_BUNDLE 一节（不要关校验）。",
+                    detail={"lines": attempts, "last_error": str(last_error)[:300] if last_error else None},
+                )
+
+            if probe:
+                _job_patch(job, status="probed")
+                return {"probe": True, "lines": attempts, "pages": len(pages), "note": "只上传不提交，没有产生稿件。"}
+
+            cover_url = await uploader._upload_cover()
+            _job_patch(job, status="submitting")
+            res = await uploader._submit(videos, cover_url)
+            _job_patch(job, status="submitted", bvid=res.get("bvid"), finished_at=time.time())
+        finally:
+            upload_jobs.release_lock(job_id or "foreground")
         result = {"bvid": res.get("bvid"), "aid": res.get("aid"), "url": f"https://www.bilibili.com/video/{res.get('bvid')}"}
         guard.record("upload", summary, result)
         if season is not None:
@@ -730,6 +862,7 @@ def edit(
     desc_file: Optional[Path] = typer.Option(None, "--desc-file", help="从文件读取新简介，`-` 表示 stdin。"),
     desc_at: list[str] = DESC_AT_OPT,
     tag: Optional[list[str]] = typer.Option(None, "--tag", help=f"新标签（整体替换），可重复传入，1 到 {TAGS_MAX} 个。"),
+    add_tag: list[str] = typer.Option([], "--add-tag", help="在现有标签后追加（保留活动话题），不整体替换，可重复传入。"),
     cover: Optional[Path] = typer.Option(None, "--cover", help="新封面图片。"),
     cover43: Optional[Path] = typer.Option(None, "--cover43", help="新的 4:3 封面（手机端推荐流）。"),
     ai_declare: Optional[bool] = typer.Option(None, "--ai-declare/--no-ai-declare", help="修改“含AI生成内容”声明；不传则保持不变。"),
@@ -770,13 +903,19 @@ def edit(
                 line_enum = vu.Lines(line)
             except ValueError as exc:
                 raise BiliError("invalid_argument", "--line 只能是 bda2 / qn / ws / bldsa。") from exc
-        if not changes and cover is None and cover43 is None and not desc_at and video is None:
-            raise BiliError("invalid_argument", "没有要修改的内容。", hint="传 --title / --desc / --desc-at / --tag / --cover / --cover43 / --ai-declare / --hide-in-space / --video 中的至少一个。")
+        if not changes and cover is None and cover43 is None and not desc_at and video is None and not add_tag:
+            raise BiliError("invalid_argument", "没有要修改的内容。", hint="传 --title / --desc / --desc-at / --tag / --add-tag / --cover / --cover43 / --ai-declare / --hide-in-space / --video 中的至少一个。")
         desc_mentions = await _desc_mentions(desc_at)
         view = await _archive_view(cred, bvid)
         require_own_archive(view, bvid)
         if reason := edit_blocker(view):
             raise BiliError("invalid_argument", reason, hint="请在网页端创作中心修改这个稿件。")
+        if add_tag:
+            arc_tags = [t for t in ((view.get("archive") or {}).get("tag") or "").split(",") if t.strip()]
+            merged = list(dict.fromkeys([*arc_tags, *[t.strip() for t in add_tag if t.strip()]]))
+            if len(merged) > TAGS_MAX:
+                raise BiliError("invalid_argument", f"追加后超过 {TAGS_MAX} 个标签（现有 {len(arc_tags)} 个）。")
+            changes["tags"] = merged
         if "tags" in changes and (bad := await _check_tags(cred, changes["tags"])):
             raise BiliError("invalid_argument", f"B 站不接受这些标签：{', '.join(bad)}", detail={"rejected_tags": bad})
         arc = view.get("archive") or {}
@@ -864,7 +1003,48 @@ def stats(bvid: str = typer.Argument(..., help="自己的稿件 BV 号。")) -> 
     run(body)
 
 
+@app.command("job")
+def job_show(job_id: str = typer.Argument(..., help="后台任务 ID（`bili upload video --background` 返回的那个）。")) -> None:
+    """查看一个后台上传任务的进度：当前线路、节点 IP、已完成分片、是否已提交、bvid。"""
+
+    async def body():
+        try:
+            return upload_jobs.read(job_id)
+        except FileNotFoundError as exc:
+            raise BiliError("not_found", f"没有任务 {job_id}。", hint="用 `bili upload jobs` 看全部任务。") from exc
+
+    run(body)
+
+
+@app.command("jobs")
+def jobs_list(
+    limit: int = typer.Option(10, "--limit", min=1, help="最多列出多少个（新的在前）。"),
+) -> None:
+    """列出最近的后台上传任务。"""
+
+    async def body():
+        jobs = upload_jobs.all_jobs()[:limit]
+        return {
+            "jobs": [
+                {
+                    "id": job.get("id"),
+                    "status": job.get("status"),
+                    "title": job.get("title"),
+                    "line": job.get("line"),
+                    "ip": job.get("ip"),
+                    "chunks": job.get("chunks"),
+                    "bvid": job.get("bvid"),
+                    "updated_at": job.get("updated_at"),
+                }
+                for job in jobs
+            ]
+        }
+
+    run(body)
+
+
 chapters = typer.Typer(help="分段章节（进度条上的章节标题）：查看、设置、清空自己稿件的章节。", no_args_is_help=True)
+app.add_typer(chapters, name="chapters")
 app.add_typer(chapters, name="chapters")
 
 

@@ -5,6 +5,13 @@
 ## [Unreleased]
 
 ### Added
+- 投稿不再自动测速：`upload video` 默认按 **ws → qn → bldsa** 的顺序尝试（`bda2` 只在你显式指定时才会用），`--lines "ws,qn"` 可以改顺序，证书/连接类错误会自动换下一条线；`bldsa` 的节点由 DNS 随机分配，所以这条线默认重试 3 次。
+- 卡住检测：`--stall-timeout`（默认 60 秒）内没有任何分片完成，就放弃当前线路换下一条；`--total-timeout` 管整个上传。每次尝试的线路、真实上传节点和 IP、分片数都会写进任务文件。
+- 后台投稿：`upload video … --background` 立刻返回任务号，上传过程不受调用方超时（MCP 140 秒、终端断开）影响；`upload job <id>` / `upload jobs` 查看状态、线路、IP、已传分片、bvid。任务文件在 `<state>/jobs/<id>.json`。
+- 防重复投稿：同一个文件 + 标题正在上传、或 24 小时内已经投过，会直接拒绝（`--force` 跳过）；同一时间只允许一个上传任务（pid 锁，进程死了会自动解除）。只有全部分 P 上传完成后才提交稿件，中途换线只在本地重传，不会提交两次。
+- `upload video --probe`：只跑线路和分片、**不提交**，用来测线路是否可用（不会产生稿件）。
+- `upload edit --add-tag`：在现有标签后追加，保留活动话题；原来的 `--tag` 仍是整体替换。
+- MCP 新增 `upload_start`（后台投稿，返回任务号）和 `upload_job`（查进度）两个工具。
 - `bili upload video --hide-in-space`：投稿时打开网页投稿页的「在个人空间-投稿中隐藏」（提交字段 `space_hidden`，1 隐藏 / 2 显示）。稿件照常公开、能被推荐和搜到，只是不占空间的投稿栏。竖屏视频加上它就是 B 站的「动态视频」（动态里显示“发布了动态视频”、卡片带“动态视频”角标），网页端没有单独发动态视频的入口，用这个就行。`bili upload edit --hide-in-space/--show-in-space` 改已投稿件；不传时编辑会保留稿件原来的设置；`bili upload status` 多了 `hidden_in_space`。
 - `bili user coins <UID|昵称>`：对方在主页公开的最近投币（视频、投了几个币、投币时间），输出不含 IP 属地。
 - `bili user favs <UID|昵称>`：对方公开的收藏夹（夹名、视频数）；私有收藏夹任何输出（包括 `--raw`）都不列出，不展开夹内视频。
